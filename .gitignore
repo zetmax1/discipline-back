@@ -1,0 +1,55 @@
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.out
+
+# Go build artifacts
+*.a
+*.o
+*.test
+*.prof
+*.zip
+
+# Go workspace
+bin/
+pkg/
+
+# Output of the go coverage tool
+profile.cov
+*.coverprofile
+
+# IDE-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Editor-specific files
+.DS_Store
+Thumbs.db
+
+# Environment specific files
+.env
+.env.local
+.env.production
+.env.development
+
+# Build and distribution directories
+build/
+dist/
+target/
+
+# Log files
+*.log
+logs/
+
+# Database files
+*.db
+*.db-journal
+
+# Dependencies cache
+go/pkg/mod/
