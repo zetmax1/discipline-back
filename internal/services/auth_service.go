@@ -17,6 +17,7 @@ type AuthService interface {
 	RegisterAdmin(name, email, password string) (*models.User, string, error)
 	Login(email, password string) (*models.User, string, error)
 	GetUserByID(id uint) (*models.User, error)
+	UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error)
 }
 
 type authService struct {
@@ -102,6 +103,45 @@ func (s *authService) Login(email, password string) (*models.User, string, error
 // GetUserByID returns a user by their ID.
 func (s *authService) GetUserByID(id uint) (*models.User, error) {
 	return s.userRepo.FindByID(id)
+}
+
+// UpdateProfile updates user name, email, and optionally password.
+func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error) {
+	user, err := s.userRepo.FindByID(id)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	if name != "" {
+		user.Name = name
+	}
+	if email != "" && email != user.Email {
+		existing, _ := s.userRepo.FindByEmail(email)
+		if existing != nil && existing.ID != id {
+			return nil, errors.New("email already in use")
+		}
+		user.Email = email
+	}
+
+	if newPassword != "" {
+		if oldPassword == "" {
+			return nil, errors.New("current password is required to set a new password")
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
+			return nil, errors.New("current password is incorrect")
+		}
+		hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, errors.New("failed to hash password")
+		}
+		user.Password = string(hashed)
+	}
+
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, errors.New("failed to update profile")
+	}
+
+	return user, nil
 }
 
 // generateToken creates a signed JWT with user ID and role claims.

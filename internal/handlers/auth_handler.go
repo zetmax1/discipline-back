@@ -195,3 +195,47 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 		"token":   token,
 	})
 }
+
+// UpdateProfileRequest is the expected JSON body for profile updates.
+type UpdateProfileRequest struct {
+	Name        string `json:"name,omitempty" example:"Jane Doe"`
+	Email       string `json:"email,omitempty" example:"jane@example.com"`
+	OldPassword string `json:"oldPassword,omitempty" example:"oldpass123"`
+	NewPassword string `json:"newPassword,omitempty" example:"newpass456"`
+}
+
+// UpdateProfile godoc
+// @Summary      Update user profile
+// @Description  Updates the authenticated user's name, email, and/or password
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      UpdateProfileRequest  true  "Profile update data"
+// @Success      200   {object}  UserResponse
+// @Failure      400   {object}  ErrorResponse
+// @Router       /me [put]
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Validation failed",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	user, err := h.authService.UpdateProfile(userID, req.Name, req.Email, req.OldPassword, req.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user": user,
+	})
+}

@@ -11,7 +11,17 @@ import (
 )
 
 // SetupRoutes registers all API routes on the Gin engine.
-func SetupRoutes(r *gin.Engine, authHandler *handlers.AuthHandler, jwtSecret string) {
+func SetupRoutes(
+	r *gin.Engine,
+	authHandler *handlers.AuthHandler,
+	taskHandler *handlers.TaskHandler,
+	quoteHandler *handlers.QuoteHandler,
+	vocabHandler *handlers.VocabHandler,
+	jwtSecret string,
+) {
+	// CORS
+	r.Use(middleware.CORSMiddleware())
+
 	// Swagger UI
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
@@ -33,7 +43,27 @@ func SetupRoutes(r *gin.Engine, authHandler *handlers.AuthHandler, jwtSecret str
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(jwtSecret))
 		{
+			// User
 			protected.GET("/me", authHandler.Me)
+			protected.PUT("/me", authHandler.UpdateProfile)
+
+			// Tasks
+			protected.POST("/tasks", taskHandler.CreateTask)
+			protected.GET("/tasks", taskHandler.GetTasks)
+			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
+			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
+
+			// Dashboard
+			protected.GET("/dashboard/stats", taskHandler.GetDashboardStats)
+
+			// Quotes
+			protected.GET("/quote", quoteHandler.GetQuote)
+
+			// Vocabulary
+			protected.GET("/vocabulary/today", vocabHandler.GetTodayWords)
+			protected.GET("/vocabulary", vocabHandler.GetAllWords)
+			protected.PUT("/vocabulary/:id/learned", vocabHandler.ToggleLearned)
+			protected.PUT("/vocabulary/:id/saved", vocabHandler.ToggleSaved)
 		}
 
 		// Admin-only routes

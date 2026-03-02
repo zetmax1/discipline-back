@@ -164,6 +164,46 @@ const docTemplate = `{
                 }
             }
         },
+        "/dashboard/stats": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns computed stats for a given date (completion, focus score, hours)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Get dashboard statistics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "2026-03-02",
+                        "description": "Date (YYYY-MM-DD), defaults to today",
+                        "name": "date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.DashboardStats"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/me": {
             "get": {
                 "security": [
@@ -200,6 +240,388 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/quote": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a motivational quote. Cached for 2-3 hours, refreshes automatically.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Quotes"
+                ],
+                "summary": "Get motivational quote",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CachedQuote"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns tasks for the authenticated user, optionally filtered by date",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tasks"
+                ],
+                "summary": "List tasks",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "2026-03-02",
+                        "description": "Filter by date (YYYY-MM-DD)",
+                        "name": "date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a time block for the authenticated user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tasks"
+                ],
+                "summary": "Create a new task",
+                "parameters": [
+                    {
+                        "description": "Task data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateTaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Partially updates a task (status, distractions, etc.)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tasks"
+                ],
+                "summary": "Update a task",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateTaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes a task by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tasks"
+                ],
+                "summary": "Delete a task",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Task ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vocabulary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns vocabulary words for the authenticated user with pagination and optional language filter",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Vocabulary"
+                ],
+                "summary": "Get all vocabulary words",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Language filter: english or russian",
+                        "name": "lang",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 30)",
+                        "name": "pageSize",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vocabulary/today": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns 2 words for today (1 English C1-C2, 1 Russian A2+). Fetches from external API on first call of the day.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Vocabulary"
+                ],
+                "summary": "Get today's vocabulary words",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Date (YYYY-MM-DD), defaults to today",
+                        "name": "date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vocabulary/{id}/learned": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Toggles the learned flag for a vocabulary word",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Vocabulary"
+                ],
+                "summary": "Toggle word learned status",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Word ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vocabulary/{id}/saved": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Toggles the saved flag for a vocabulary word",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Vocabulary"
+                ],
+                "summary": "Toggle word saved status",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Word ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -216,6 +638,67 @@ const docTemplate = `{
                 },
                 "user": {
                     "$ref": "#/definitions/models.User"
+                }
+            }
+        },
+        "handlers.CachedQuote": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string",
+                    "example": "Jim Rohn"
+                },
+                "quote": {
+                    "type": "string",
+                    "example": "Discipline is the bridge between goals and accomplishment."
+                }
+            }
+        },
+        "handlers.CreateTaskRequest": {
+            "type": "object",
+            "required": [
+                "category",
+                "date",
+                "endTime",
+                "energy",
+                "name",
+                "startTime"
+            ],
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "enum": [
+                        "deep-work",
+                        "study",
+                        "admin",
+                        "gym",
+                        "rest"
+                    ],
+                    "example": "deep-work"
+                },
+                "date": {
+                    "type": "string",
+                    "example": "2026-03-02"
+                },
+                "endTime": {
+                    "type": "string",
+                    "example": "10:00"
+                },
+                "energy": {
+                    "type": "integer",
+                    "maximum": 5,
+                    "minimum": 1,
+                    "example": 4
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "example": "Morning routine"
+                },
+                "startTime": {
+                    "type": "string",
+                    "example": "09:00"
                 }
             }
         },
@@ -274,6 +757,43 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.UpdateTaskRequest": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "example": "study"
+                },
+                "date": {
+                    "type": "string",
+                    "example": "2026-03-02"
+                },
+                "distractions": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "endTime": {
+                    "type": "string",
+                    "example": "11:00"
+                },
+                "energy": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Updated task name"
+                },
+                "startTime": {
+                    "type": "string",
+                    "example": "09:30"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "completed"
+                }
+            }
+        },
         "handlers.UserResponse": {
             "type": "object",
             "properties": {
@@ -302,6 +822,31 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "services.DashboardStats": {
+            "type": "object",
+            "properties": {
+                "completedTasks": {
+                    "type": "integer"
+                },
+                "completionRate": {
+                    "description": "percentage 0-100",
+                    "type": "integer"
+                },
+                "deepWorkHours": {
+                    "type": "number"
+                },
+                "focusScore": {
+                    "description": "0-100",
+                    "type": "integer"
+                },
+                "totalHours": {
+                    "type": "number"
+                },
+                "totalTasks": {
+                    "type": "integer"
                 }
             }
         }

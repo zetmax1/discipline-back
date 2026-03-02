@@ -11,6 +11,53 @@ definitions:
       user:
         $ref: '#/definitions/models.User'
     type: object
+  handlers.CachedQuote:
+    properties:
+      author:
+        example: Jim Rohn
+        type: string
+      quote:
+        example: Discipline is the bridge between goals and accomplishment.
+        type: string
+    type: object
+  handlers.CreateTaskRequest:
+    properties:
+      category:
+        enum:
+        - deep-work
+        - study
+        - admin
+        - gym
+        - rest
+        example: deep-work
+        type: string
+      date:
+        example: "2026-03-02"
+        type: string
+      endTime:
+        example: "10:00"
+        type: string
+      energy:
+        example: 4
+        maximum: 5
+        minimum: 1
+        type: integer
+      name:
+        example: Morning routine
+        maxLength: 200
+        minLength: 1
+        type: string
+      startTime:
+        example: "09:00"
+        type: string
+    required:
+    - category
+    - date
+    - endTime
+    - energy
+    - name
+    - startTime
+    type: object
   handlers.ErrorResponse:
     properties:
       details:
@@ -51,6 +98,33 @@ definitions:
     - name
     - password
     type: object
+  handlers.UpdateTaskRequest:
+    properties:
+      category:
+        example: study
+        type: string
+      date:
+        example: "2026-03-02"
+        type: string
+      distractions:
+        example: 2
+        type: integer
+      endTime:
+        example: "11:00"
+        type: string
+      energy:
+        example: 3
+        type: integer
+      name:
+        example: Updated task name
+        type: string
+      startTime:
+        example: "09:30"
+        type: string
+      status:
+        example: completed
+        type: string
+    type: object
   handlers.UserResponse:
     properties:
       user:
@@ -70,6 +144,23 @@ definitions:
         type: string
       updated_at:
         type: string
+    type: object
+  services.DashboardStats:
+    properties:
+      completedTasks:
+        type: integer
+      completionRate:
+        description: percentage 0-100
+        type: integer
+      deepWorkHours:
+        type: number
+      focusScore:
+        description: 0-100
+        type: integer
+      totalHours:
+        type: number
+      totalTasks:
+        type: integer
     type: object
 host: localhost:8080
 info:
@@ -175,6 +266,32 @@ paths:
       summary: Register a new user
       tags:
       - Auth
+  /dashboard/stats:
+    get:
+      description: Returns computed stats for a given date (completion, focus score,
+        hours)
+      parameters:
+      - description: Date (YYYY-MM-DD), defaults to today
+        example: "2026-03-02"
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/services.DashboardStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get dashboard statistics
+      tags:
+      - Dashboard
   /me:
     get:
       description: Returns the authenticated user's profile
@@ -198,6 +315,251 @@ paths:
       summary: Get current user
       tags:
       - Auth
+  /quote:
+    get:
+      description: Returns a motivational quote. Cached for 2-3 hours, refreshes automatically.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.CachedQuote'
+      security:
+      - BearerAuth: []
+      summary: Get motivational quote
+      tags:
+      - Quotes
+  /tasks:
+    get:
+      description: Returns tasks for the authenticated user, optionally filtered by
+        date
+      parameters:
+      - description: Filter by date (YYYY-MM-DD)
+        example: "2026-03-02"
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List tasks
+      tags:
+      - Tasks
+    post:
+      consumes:
+      - application/json
+      description: Creates a time block for the authenticated user
+      parameters:
+      - description: Task data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a new task
+      tags:
+      - Tasks
+  /tasks/{id}:
+    delete:
+      description: Deletes a task by ID
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a task
+      tags:
+      - Tasks
+    put:
+      consumes:
+      - application/json
+      description: Partially updates a task (status, distractions, etc.)
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a task
+      tags:
+      - Tasks
+  /vocabulary:
+    get:
+      description: Returns vocabulary words for the authenticated user with pagination
+        and optional language filter
+      parameters:
+      - description: 'Language filter: english or russian'
+        in: query
+        name: lang
+        type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 30)
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get all vocabulary words
+      tags:
+      - Vocabulary
+  /vocabulary/{id}/learned:
+    put:
+      description: Toggles the learned flag for a vocabulary word
+      parameters:
+      - description: Word ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Toggle word learned status
+      tags:
+      - Vocabulary
+  /vocabulary/{id}/saved:
+    put:
+      description: Toggles the saved flag for a vocabulary word
+      parameters:
+      - description: Word ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Toggle word saved status
+      tags:
+      - Vocabulary
+  /vocabulary/today:
+    get:
+      description: Returns 2 words for today (1 English C1-C2, 1 Russian A2+). Fetches
+        from external API on first call of the day.
+      parameters:
+      - description: Date (YYYY-MM-DD), defaults to today
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get today's vocabulary words
+      tags:
+      - Vocabulary
 securityDefinitions:
   BearerAuth:
     description: 'Enter your JWT token with the Bearer prefix: "Bearer <token>"'

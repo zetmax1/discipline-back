@@ -35,15 +35,30 @@ func main() {
 	config.SeedAdmin(db, cfg)
 
 	// Initialize layers: repository → service → handler
+
+	// Auth
 	userRepo := repositories.NewUserRepository(db)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTExpiryHrs)
 	authHandler := handlers.NewAuthHandler(authService)
+
+	// Tasks
+	taskRepo := repositories.NewTaskRepository(db)
+	taskService := services.NewTaskService(taskRepo)
+	taskHandler := handlers.NewTaskHandler(taskService)
+
+	// Quotes
+	quoteHandler := handlers.NewQuoteHandler()
+
+	// Vocabulary
+	vocabRepo := repositories.NewVocabRepository(db)
+	vocabService := services.NewVocabService(vocabRepo)
+	vocabHandler := handlers.NewVocabHandler(vocabService)
 
 	// Setup Gin router
 	r := gin.Default()
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, cfg.JWTSecret)
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
