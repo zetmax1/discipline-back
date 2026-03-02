@@ -15,9 +15,10 @@ type Config struct {
 	DBUser       string
 	DBPassword   string
 	DBName       string
-	JWTSecret    string
-	JWTExpiryHrs int
-	Port         string
+	JWTSecret      string
+	JWTExpiryHrs   int
+	Port           string
+	AllowedOrigins string
 }
 
 // Load reads configuration from .env file and environment variables.
@@ -37,10 +38,11 @@ func Load() *Config {
 		DBPort:       getEnv("DB_PORT", "5432"),
 		DBUser:       getEnv("DB_USER", "postgres"),
 		DBPassword:   getEnv("DB_PASSWORD", "postgres"),
-		DBName:       getEnv("DB_NAME", "discipline"),
-		JWTSecret:    getEnv("JWT_SECRET", "default-secret-change-me"),
-		JWTExpiryHrs: jwtExpiry,
-		Port:         getEnv("PORT", "8080"),
+		DBName:         getEnv("DB_NAME", "discipline"),
+		JWTSecret:      getEnv("JWT_SECRET", "default-secret-change-me"),
+		JWTExpiryHrs:   jwtExpiry,
+		Port:           getEnv("PORT", "8080"),
+		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081"),
 	}
 }
 

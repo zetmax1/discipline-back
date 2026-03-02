@@ -18,9 +18,12 @@ func SetupRoutes(
 	quoteHandler *handlers.QuoteHandler,
 	vocabHandler *handlers.VocabHandler,
 	jwtSecret string,
+	allowedOrigins string,
 ) {
-	// CORS
-	r.Use(middleware.CORSMiddleware())
+	// Global Middlewares
+	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.GlobalRateLimiter())
+	r.Use(middleware.CORSMiddleware(allowedOrigins))
 
 	// Swagger UI
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -32,8 +35,9 @@ func SetupRoutes(
 
 	api := r.Group("/api")
 	{
-		// Public auth routes
+		// Public auth routes with strict rate limiting
 		auth := api.Group("/auth")
+		auth.Use(middleware.AuthRateLimiter())
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
