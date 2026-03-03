@@ -39,10 +39,10 @@ func Load() *Config {
 		DBUser:       getEnv("DB_USER", "postgres"),
 		DBPassword:   getEnv("DB_PASSWORD", "postgres"),
 		DBName:         getEnv("DB_NAME", "discipline"),
-		JWTSecret:      getEnv("JWT_SECRET", "default-secret-change-me"),
+		JWTSecret:      getEnv("JWT_SECRET", "def3013nr2fewfy8923nfgsdjf24p29348r24pr8fhwufh2n34p8r24yrne8789)*(&f32fgef)"),
 		JWTExpiryHrs:   jwtExpiry,
 		Port:           getEnv("PORT", "8080"),
-		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081"),
+		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,https://discipline-front.up.railway.app"),
 	}
 }
 
