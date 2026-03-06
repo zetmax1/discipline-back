@@ -65,3 +65,9 @@ func GlobalRateLimiter() gin.HandlerFunc {
 func AuthRateLimiter() gin.HandlerFunc {
 	return RateLimiter(rate.Every(time.Minute/5), 5)
 }
+
+// AnalyticsRateLimiter allows 10 requests per minute with a burst of 5
+// Analytics queries can be database-heavy, so they have a stricter limit than global.
+func AnalyticsRateLimiter() gin.HandlerFunc {
+	return RateLimiter(rate.Every(time.Minute/10), 5)
+}

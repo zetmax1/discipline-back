@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -10,7 +12,6 @@ import (
 	"discipline-backend/internal/models"
 )
 
-// SetupRoutes registers all API routes on the Gin engine.
 func SetupRoutes(
 	r *gin.Engine,
 	authHandler *handlers.AuthHandler,
@@ -19,6 +20,7 @@ func SetupRoutes(
 	vocabHandler *handlers.VocabHandler,
 	jwtSecret string,
 	allowedOrigins string,
+	analyticsAPIKey string,
 ) {
 	// Global Middlewares
 	r.Use(middleware.SecurityHeaders())
@@ -59,6 +61,19 @@ func SetupRoutes(
 
 			// Dashboard
 			protected.GET("/dashboard/stats", taskHandler.GetDashboardStats)
+
+			// Analytics (proxied to Python service with strict rate limiting)
+			analytics := protected.Group("/analytics")
+			analytics.Use(middleware.AnalyticsRateLimiter())
+			{
+				pythonURL := os.Getenv("PYTHON_SERVICE_URL")
+				if pythonURL == "" {
+					pythonURL = "https://discipline-py.up.railway.app/"
+				}
+				analyticsHandler := handlers.NewAnalyticsHandler(pythonURL, analyticsAPIKey)
+				analytics.GET("", analyticsHandler.GetAnalytics)
+				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)
+			}
 
 			// Quotes
 			protected.GET("/quote", quoteHandler.GetQuote)

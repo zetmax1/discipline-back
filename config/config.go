@@ -19,6 +19,7 @@ type Config struct {
 	JWTExpiryHrs   int
 	Port           string
 	AllowedOrigins string
+	AnalyticsAPIKey string
 }
 
 // Load reads configuration from .env file and environment variables.
@@ -43,6 +44,7 @@ func Load() *Config {
 		JWTExpiryHrs:   jwtExpiry,
 		Port:           getEnv("PORT", "8080"),
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,https://discipline-front.up.railway.app"),
+		AnalyticsAPIKey: getEnv("ANALYTICS_API_KEY", "development_internal_analytics_key"),
 	}
 }
 
