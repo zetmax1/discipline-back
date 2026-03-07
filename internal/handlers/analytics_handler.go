@@ -114,6 +114,11 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analytics service returned an error"})
+		return
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read analytics response"})
