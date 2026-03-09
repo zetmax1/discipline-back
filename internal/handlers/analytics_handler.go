@@ -133,3 +133,58 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
+
+// GenerateSmartSchedule proxies the smart-schedule endpoint
+// @Summary      Generate smart schedule
+// @Description  Proxies request to Python to generate a weekly schedule based on user's past habits.
+// @Tags         Analytics
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body  interface{}  true  "Smart schedule request (commitments and goals)"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  ErrorResponse
+// @Failure      500   {object}  ErrorResponse
+// @Router       /analytics/smart-schedule [post]
+func (h *AnalyticsHandler) GenerateSmartSchedule(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+
+	// In the real route we proxy to POST /analytics/smart-schedule
+	endpoint := fmt.Sprintf("%s/analytics/smart-schedule?user_id=%d", h.pythonServiceURL, userID)
+
+	// Proxy the request body directly
+	req, err := http.NewRequest("POST", endpoint, c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		return
+	}
+	req.Header.Add("X-API-Key", h.apiKey)
+	req.Header.Add("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to analytics service"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analytics service returned an error"})
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response"})
+		return
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid JSON from analytics service"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}

@@ -22,6 +22,7 @@ type DashboardStats struct {
 // TaskService defines task business logic.
 type TaskService interface {
 	CreateTask(task *models.Task) error
+	BulkCreateTasks(tasks []*models.Task) error
 	GetTask(id, userID uint) (*models.Task, error)
 	GetTasks(userID uint, date string) ([]models.Task, error)
 	UpdateTask(id, userID uint, updates map[string]interface{}) (*models.Task, error)
@@ -40,6 +41,16 @@ func NewTaskService(taskRepo repositories.TaskRepository) TaskService {
 
 func (s *taskService) CreateTask(task *models.Task) error {
 	return s.taskRepo.Create(task)
+}
+
+func (s *taskService) BulkCreateTasks(tasks []*models.Task) error {
+	// Simple loop creation, preferably would use batch insert in GORM
+	for _, task := range tasks {
+		if err := s.taskRepo.Create(task); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *taskService) GetTask(id, userID uint) (*models.Task, error) {

@@ -27,6 +27,13 @@ func SetupRoutes(
 	r.Use(middleware.GlobalRateLimiter())
 	r.Use(middleware.CORSMiddleware(allowedOrigins))
 
+	r.NoRoute(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
+		c.JSON(404, gin.H{"error": "route not found"})
+	})
+	r.NoMethod(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
+		c.JSON(405, gin.H{"error": "method not allowed"})
+	})
+
 	// Swagger UI
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
@@ -55,6 +62,7 @@ func SetupRoutes(
 
 			// Tasks
 			protected.POST("/tasks", taskHandler.CreateTask)
+			protected.POST("/tasks/bulk", taskHandler.BulkCreateTasks)
 			protected.GET("/tasks", taskHandler.GetTasks)
 			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
 			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
@@ -73,8 +81,8 @@ func SetupRoutes(
 				analyticsHandler := handlers.NewAnalyticsHandler(pythonURL, analyticsAPIKey)
 				analytics.GET("", analyticsHandler.GetAnalytics)
 				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)
+				analytics.POST("/smart-schedule", analyticsHandler.GenerateSmartSchedule)
 			}
-
 			// Quotes
 			protected.GET("/quote", quoteHandler.GetQuote)
 

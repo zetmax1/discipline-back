@@ -22,7 +22,10 @@ func CORSMiddleware(allowedOrigins string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
 
-		if allowedOrigins == "*" {
+		if origin != "" {
+			// Always reflect the origin back for local dev and avoiding credential CORS errors
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+		} else if allowedOrigins == "*" {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		} else if originSet[origin] {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)

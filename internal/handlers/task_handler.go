@@ -45,6 +45,11 @@ type UpdateTaskRequest struct {
 	Date         *string `json:"date,omitempty" example:"2026-03-02"`
 }
 
+// BulkCreateTasksRequest is a list of multiple CreateTaskRequest items
+type BulkCreateTasksRequest struct {
+	Tasks []CreateTaskRequest `json:"tasks" binding:"required,dive"`
+}
+
 // TaskListResponse wraps a list of tasks.
 type TaskListResponse struct {
 	Tasks []interface{} `json:"tasks"`
@@ -97,6 +102,56 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Task created successfully",
 		"task":    task,
+	})
+}
+
+// BulkCreateTasks godoc
+// @Summary      Create multiple tasks
+// @Description  Creates multiple time blocks for the authenticated user
+// @Tags         Tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body  BulkCreateTasksRequest  true  "Array of tasks"
+// @Success      201   {object}  map[string]interface{}
+// @Failure      400   {object}  ErrorResponse
+// @Router       /tasks/bulk [post]
+func (h *TaskHandler) BulkCreateTasks(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+
+	var req BulkCreateTasksRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Validation failed",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	var tasks []*models.Task
+	for _, tr := range req.Tasks {
+		tasks = append(tasks, &models.Task{
+			UserID:    userID,
+			Name:      tr.Name,
+			Category:  tr.Category,
+			StartTime: tr.StartTime,
+			EndTime:   tr.EndTime,
+			Energy:    tr.Energy,
+			Date:      tr.Date,
+			Status:    models.StatusPending,
+		})
+	}
+
+	if err := h.taskService.BulkCreateTasks(tasks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create multiple tasks",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Tasks created successfully",
+		"count":   len(tasks),
 	})
 }
 

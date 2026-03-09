@@ -43,7 +43,7 @@ func Load() *Config {
 		JWTSecret:      getEnv("JWT_SECRET", "def3013nr2fewfy8923nfgsdjf24p29348r24pr8fhwufh2n34p8r24yrne8789)*(&f32fgef)"),
 		JWTExpiryHrs:   jwtExpiry,
 		Port:           getEnv("PORT", "8080"),
-		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
+		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:5173,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
 		AnalyticsAPIKey: getEnv("ANALYTICS_API_KEY", "development_internal_analytics_key"),
 	}
 }
