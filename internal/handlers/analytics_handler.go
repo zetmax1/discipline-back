@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,8 +20,10 @@ type AnalyticsHandler struct {
 func NewAnalyticsHandler(pythonServiceURL, apiKey string) *AnalyticsHandler {
 	// Default to local service if not provided
 	if pythonServiceURL == "" {
-		pythonServiceURL = "https://discipline-py.up.railway.app/" 	
+		pythonServiceURL = "https://discipline-py.up.railway.app"
 	}
+	// Remove trailing slashes to avoid double-slash URLs (e.g. //analytics/weekly)
+	pythonServiceURL = strings.TrimRight(pythonServiceURL, "/")
 	return &AnalyticsHandler{
 		pythonServiceURL: pythonServiceURL,
 		apiKey:           apiKey,
