@@ -53,3 +53,8 @@ logs/
 
 # Dependencies cache
 go/pkg/mod/
+# Never commit: credential dumps, compiled server binary, APM agent cache
+fake_users_credentials.csv
+*credentials*.csv
+/discipline-backend
+arms_cache/
