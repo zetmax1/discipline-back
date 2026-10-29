@@ -111,3 +111,28 @@ func TestUpdateProfile_Timezone(t *testing.T) {
 		}
 	}
 }
+
+func TestTodayWords_DateParamValidatedInUserTimezone(t *testing.T) {
+	freezeNow(t, halfPastMidnightTashkent) // local date 2026-10-29
+	vocab := &dateCapturingVocabService{}
+	r := tzRouter("Asia/Tashkent", func(r *gin.Engine) {
+		r.GET("/vocab", NewVocabHandler(vocab).GetTodayWords)
+	})
+	for q, want := range map[string]int{
+		"date=2026-10-30": http.StatusOK,         // tomorrow locally
+		"date=2026-10-31": http.StatusBadRequest, // two days ahead
+		"date=2026-01-01": http.StatusOK,         // past is fine
+		"date=2026-02-30": http.StatusBadRequest,
+		"date=garbage":    http.StatusBadRequest,
+		"date=29.10.2026": http.StatusBadRequest,
+	} {
+		vocab.date = ""
+		w := doRequest(r, http.MethodGet, "/vocab?"+q, "")
+		if w.Code != want {
+			t.Errorf("%s: expected %d, got %d", q, want, w.Code)
+		}
+		if want != http.StatusOK && vocab.date != "" {
+			t.Errorf("%s: service must not be called for an invalid date", q)
+		}
+	}
+}

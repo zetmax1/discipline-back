@@ -4,11 +4,14 @@ import (
 	"discipline-backend/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // VocabRepository defines the interface for vocabulary data access.
 type VocabRepository interface {
 	Create(word *models.VocabularyWord) error
+	// CreateIfAbsent inserts the word unless the user already has one for that date and language.
+	CreateIfAbsent(word *models.VocabularyWord) error
 	FindByUserAndDate(userID uint, date string) ([]models.VocabularyWord, error)
 	FindByID(id, userID uint) (*models.VocabularyWord, error)
 	Update(word *models.VocabularyWord) error
@@ -27,6 +30,13 @@ func NewVocabRepository(db *gorm.DB) VocabRepository {
 
 func (r *vocabRepository) Create(word *models.VocabularyWord) error {
 	return r.db.Create(word).Error
+}
+
+func (r *vocabRepository) CreateIfAbsent(word *models.VocabularyWord) error {
+	return r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "date"}, {Name: "language"}},
+		DoNothing: true,
+	}).Create(word).Error
 }
 
 func (r *vocabRepository) FindByUserAndDate(userID uint, date string) ([]models.VocabularyWord, error) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -30,6 +31,16 @@ func respondWordError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update word"})
 }
 
+// validVocabDate accepts a real YYYY-MM-DD date at most one day after today in the user's zone.
+func validVocabDate(c *gin.Context, date string) bool {
+	d, err := time.Parse("2006-01-02", date)
+	if err != nil || d.Format("2006-01-02") != date {
+		return false
+	}
+	tomorrow := nowFunc().In(userLocation(c)).AddDate(0, 0, 1).Format("2006-01-02")
+	return date <= tomorrow
+}
+
 // GetTodayWords godoc
 // @Summary      Get today's vocabulary words
 // @Description  Returns 2 words for today (1 English C1-C2, 1 Russian A2+). Fetches from external API on first call of the day.
@@ -45,6 +56,9 @@ func (h *VocabHandler) GetTodayWords(c *gin.Context) {
 	date := c.Query("date")
 	if date == "" {
 		date = userToday(c)
+	} else if !validVocabDate(c, date) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "date must be a valid YYYY-MM-DD date no later than tomorrow"})
+		return
 	}
 
 	words, err := h.vocabService.GetTodayWords(userID, date)

@@ -50,7 +50,7 @@ func (s *vocabService) GetTodayWords(userID uint, date string) ([]models.Vocabul
 
 	// Only fetch if missing a language
 	if !hasEnglish || !hasRussian {
-		newWords := s.fetchDailyWords(userID, date)
+		newWords, unsaved := s.fetchDailyWords(userID, date)
 		for i := range newWords {
 			// Skip if we already have this language
 			if newWords[i].Language == "english" && hasEnglish {
@@ -59,15 +59,35 @@ func (s *vocabService) GetTodayWords(userID uint, date string) ([]models.Vocabul
 			if newWords[i].Language == "russian" && hasRussian {
 				continue
 			}
-			if err := s.vocabRepo.Create(&newWords[i]); err != nil {
-				log.Printf("Failed to save vocab word: %v", err)
+			// A concurrent request may have inserted the same word; ON CONFLICT keeps one row.
+			if err := s.vocabRepo.CreateIfAbsent(&newWords[i]); err != nil {
+				return nil, err
 			}
 		}
 		// Re-fetch to include newly created words
-		return s.vocabRepo.FindByUserAndDate(userID, date)
+		words, err := s.vocabRepo.FindByUserAndDate(userID, date)
+		if err != nil {
+			return nil, err
+		}
+		// The fallback is returned but never stored, so the next request retries the dictionary.
+		for _, w := range unsaved {
+			if !hasLanguage(words, w.Language) {
+				words = append(words, w)
+			}
+		}
+		return words, nil
 	}
 
 	return words, nil
+}
+
+func hasLanguage(words []models.VocabularyWord, lang string) bool {
+	for _, w := range words {
+		if w.Language == lang {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *vocabService) ToggleLearned(id, userID uint) (*models.VocabularyWord, error) {
@@ -141,9 +161,9 @@ var russianWordPool = []russianEntry{
 
 // --- Fetching ---
 
-// fetchDailyWords fetches one English and one Russian word.
-func (s *vocabService) fetchDailyWords(userID uint, date string) []models.VocabularyWord {
-	var words []models.VocabularyWord
+// fetchDailyWords returns the day's words to store and, if the dictionary lookup
+// failed, an unsaved English fallback (ID 0) to show this time only.
+func (s *vocabService) fetchDailyWords(userID uint, date string) (words, unsaved []models.VocabularyWord) {
 
 	// Pick deterministically based on date
 	dayHash := hashDate(date)
@@ -159,7 +179,7 @@ func (s *vocabService) fetchDailyWords(userID uint, date string) []models.Vocabu
 	}
 
 	enWord := englishWords[dayHash%len(englishWords)]
-	if enDef := s.fetchEnglishDefinition(enWord); enDef != nil {
+	if enDef := s.fetchEnglishDefinition(enWord); enDef != nil && enDef.Definition != "" {
 		words = append(words, models.VocabularyWord{
 			UserID:       userID,
 			Word:         enDef.Word,
@@ -171,8 +191,8 @@ func (s *vocabService) fetchDailyWords(userID uint, date string) []models.Vocabu
 			Date:         date,
 		})
 	} else {
-		// English fallback
-		words = append(words, models.VocabularyWord{
+		// English fallback: never persisted
+		unsaved = append(unsaved, models.VocabularyWord{
 			UserID:     userID,
 			Word:       enWord,
 			Language:   "english",
@@ -192,7 +212,7 @@ func (s *vocabService) fetchDailyWords(userID uint, date string) []models.Vocabu
 		Date:       date,
 	})
 
-	return words
+	return words, unsaved
 }
 
 // dictionaryAPIBaseURL is the Free Dictionary API entry endpoint (overridden in tests).

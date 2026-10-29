@@ -310,3 +310,37 @@ func TestUserTimezoneColumnBackfillsExistingUsers(t *testing.T) {
 		t.Fatalf("existing users must get Asia/Tashkent and the column must be NOT NULL; got %q nullable=%s", tz, nullable)
 	}
 }
+
+func TestVocabularyDedupeKeepsOldestAndMergesFlags(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 3); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'a@example.com', 'x'), (2, 'Bob', 'b@example.com', 'x')`)
+	mustExec(t, db, `INSERT INTO vocabulary_words (id, user_id, word, language, definition, date, learned, saved) VALUES
+		(1, 1, 'first',  'english', 'd', '2026-10-29', false, true),
+		(2, 1, 'second', 'english', 'd', '2026-10-29', true,  false),
+		(3, 1, 'third',  'english', 'd', '2026-10-29', false, false),
+		(4, 1, 'слово',  'russian', 'd', '2026-10-29', false, false),
+		(5, 2, 'first',  'english', 'd', '2026-10-29', false, false),
+		(6, 1, 'other',  'english', 'd', '2026-10-30', false, false)`)
+
+	if err := dbmigrate.UpTo(ctx, db, 4); err != nil {
+		t.Fatalf("dedupe migration: %v", err)
+	}
+	var ids string
+	mustScan(t, db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM vocabulary_words`, &ids)
+	if ids != "1,4,5,6" {
+		t.Fatalf("expected the oldest duplicate (1) and all unique rows to remain, got %s", ids)
+	}
+	var learned, saved bool
+	var word string
+	mustScan(t, db, `SELECT word, learned, saved FROM vocabulary_words WHERE id = 1`, &word, &learned, &saved)
+	if word != "first" || !learned || !saved {
+		t.Fatalf("kept row must keep its word and merge learned/saved from duplicates; got %s learned=%v saved=%v", word, learned, saved)
+	}
+	if _, err := db.Exec(`INSERT INTO vocabulary_words (user_id, word, language, definition, date) VALUES (1, 'dup', 'english', 'd', '2026-10-29')`); err == nil {
+		t.Fatal("a duplicate (user_id, date, language) must be rejected by the unique index")
+	}
+}
