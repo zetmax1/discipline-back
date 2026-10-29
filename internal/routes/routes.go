@@ -40,7 +40,7 @@ func SetupRoutes(
 	// Global Middlewares
 	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.SecurityHeaders())
-	r.Use(middleware.RateLimit(limits, middleware.GlobalPolicy, middleware.ByClientIP))
+	r.Use(middleware.RateLimit(limits, middleware.GlobalPolicy, middleware.ByUserOrIP(jwtSecret)))
 	r.Use(middleware.CORSMiddleware(allowedOrigins))
 
 	r.NoRoute(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
@@ -95,7 +95,7 @@ func SetupRoutes(
 
 			// Analytics (proxied to Python service with strict rate limiting)
 			analytics := protected.Group("/analytics")
-			analytics.Use(middleware.RateLimit(limits, middleware.AnalyticsPolicy, middleware.ByClientIP))
+			analytics.Use(middleware.RateLimit(limits, middleware.AnalyticsPolicy, middleware.ByUserID))
 			{
 				analytics.GET("", analyticsHandler.GetAnalytics)
 				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)

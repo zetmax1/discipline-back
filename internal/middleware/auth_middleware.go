@@ -21,6 +21,16 @@ type AuthUser struct {
 // when the user no longer exists.
 type UserLoader func(userID uint) (*AuthUser, error)
 
+// hmacKey accepts only HMAC-signed tokens, verified with secret.
+func hmacKey(secret string) jwt.Keyfunc {
+	return func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(secret), nil
+	}
+}
+
 // AuthMiddleware validates the JWT token from the Authorization header, then loads
 // the user from the database. Sets "userID", "userRole" and "userTimezone".
 func AuthMiddleware(jwtSecret string, loadUser UserLoader) gin.HandlerFunc {
@@ -46,13 +56,7 @@ func AuthMiddleware(jwtSecret string, loadUser UserLoader) gin.HandlerFunc {
 		tokenString := parts[1]
 
 		// Parse and validate the token
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// Ensure the signing method is HMAC
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return []byte(jwtSecret), nil
-		})
+		token, err := jwt.Parse(tokenString, hmacKey(jwtSecret))
 
 		if err != nil || !token.Valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
