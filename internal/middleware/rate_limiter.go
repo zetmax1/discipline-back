@@ -15,37 +15,67 @@ type client struct {
 	lastSeen time.Time
 }
 
-// RateLimiter returns a middleware that limits requests by IP.
-// r is the rate in requests per second, b is the burst size.
-func RateLimiter(r rate.Limit, b int) gin.HandlerFunc {
-	clients := make(map[string]*client)
-	var mu sync.Mutex
+// defaultMaxClients caps how many client IPs a limiter tracks at once.
+const defaultMaxClients = 10000
 
-	// Cleanup stale clients periodically
-	go func() {
-		for {
-			time.Sleep(time.Minute)
-			mu.Lock()
-			for ip, c := range clients {
-				if time.Since(c.lastSeen) > 3*time.Minute {
-					delete(clients, ip)
-				}
-			}
-			mu.Unlock()
+// rateLimiter keeps one token bucket per client IP, up to maxClients entries.
+// Clients beyond the cap share a single overflow bucket instead of growing the map.
+type rateLimiter struct {
+	mu         sync.Mutex
+	clients    map[string]*client
+	overflow   *rate.Limiter
+	r          rate.Limit
+	b          int
+	maxClients int
+}
+
+func newRateLimiter(r rate.Limit, b int, maxClients int) *rateLimiter {
+	return &rateLimiter{
+		clients:    make(map[string]*client),
+		overflow:   rate.NewLimiter(r, b),
+		r:          r,
+		b:          b,
+		maxClients: maxClients,
+	}
+}
+
+// limiterFor returns the bucket for ip, creating one if there is room.
+func (rl *rateLimiter) limiterFor(ip string) *rate.Limiter {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if c, found := rl.clients[ip]; found {
+		c.lastSeen = time.Now()
+		return c.limiter
+	}
+	if len(rl.clients) >= rl.maxClients {
+		rl.pruneLocked(time.Minute)
+	}
+	if len(rl.clients) >= rl.maxClients {
+		return rl.overflow
+	}
+	c := &client{limiter: rate.NewLimiter(rl.r, rl.b), lastSeen: time.Now()}
+	rl.clients[ip] = c
+	return c.limiter
+}
+
+// pruneLocked removes clients idle for longer than maxIdle. Must be called with mu held.
+func (rl *rateLimiter) pruneLocked(maxIdle time.Duration) {
+	for ip, c := range rl.clients {
+		if time.Since(c.lastSeen) > maxIdle {
+			delete(rl.clients, ip)
 		}
-	}()
+	}
+}
 
+func (rl *rateLimiter) size() int {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return len(rl.clients)
+}
+
+func (rl *rateLimiter) handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ip := c.ClientIP()
-		mu.Lock()
-		if _, found := clients[ip]; !found {
-			clients[ip] = &client{limiter: rate.NewLimiter(r, b)}
-		}
-		clients[ip].lastSeen = time.Now()
-		limiter := clients[ip].limiter
-		mu.Unlock()
-
-		if !limiter.Allow() {
+		if !rl.limiterFor(c.ClientIP()).Allow() {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "Too many requests. Please try again later.",
 			})
@@ -54,6 +84,24 @@ func RateLimiter(r rate.Limit, b int) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// RateLimiter returns a middleware that limits requests by IP.
+// r is the rate in requests per second, b is the burst size.
+func RateLimiter(r rate.Limit, b int) gin.HandlerFunc {
+	rl := newRateLimiter(r, b, defaultMaxClients)
+
+	// Cleanup stale clients periodically
+	go func() {
+		for {
+			time.Sleep(time.Minute)
+			rl.mu.Lock()
+			rl.pruneLocked(3 * time.Minute)
+			rl.mu.Unlock()
+		}
+	}()
+
+	return rl.handler()
 }
 
 // GlobalRateLimiter allows 100 requests per minute (~1.6 per sec) with a burst of 20

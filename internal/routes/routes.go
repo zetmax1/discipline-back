@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"os"
-
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -10,7 +8,19 @@ import (
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/models"
+	"discipline-backend/internal/repositories"
 )
+
+// UserLoader adapts the user repository for AuthMiddleware.
+func UserLoader(users repositories.UserRepository) middleware.UserLoader {
+	return func(id uint) (*middleware.AuthUser, error) {
+		u, err := users.FindByID(id)
+		if err != nil {
+			return nil, err
+		}
+		return &middleware.AuthUser{Role: u.Role, Timezone: u.Timezone, TokenVersion: u.TokenVersion}, nil
+	}
+}
 
 func SetupRoutes(
 	r *gin.Engine,
@@ -20,9 +30,13 @@ func SetupRoutes(
 	vocabHandler *handlers.VocabHandler,
 	jwtSecret string,
 	allowedOrigins string,
-	analyticsAPIKey string,
+	pythonServiceURL string,
+	internalJWTSecret string,
+	enableDocs bool,
+	loadUser middleware.UserLoader,
 ) {
 	// Global Middlewares
+	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.GlobalRateLimiter())
 	r.Use(middleware.CORSMiddleware(allowedOrigins))
@@ -34,8 +48,10 @@ func SetupRoutes(
 		c.JSON(405, gin.H{"error": "method not allowed"})
 	})
 
-	// Swagger UI
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Swagger UI (only when ENABLE_DOCS=true)
+	if enableDocs {
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	// Health check
 	r.GET("/ping", func(c *gin.Context) {
@@ -54,31 +70,30 @@ func SetupRoutes(
 
 		// Protected routes (any authenticated user)
 		protected := api.Group("")
-		protected.Use(middleware.AuthMiddleware(jwtSecret))
+		protected.Use(middleware.AuthMiddleware(jwtSecret, loadUser))
 		{
 			// User
 			protected.GET("/me", authHandler.Me)
 			protected.PUT("/me", authHandler.UpdateProfile)
+			protected.POST("/auth/logout", authHandler.Logout)
 
 			// Tasks
 			protected.POST("/tasks", taskHandler.CreateTask)
 			protected.POST("/tasks/bulk", taskHandler.BulkCreateTasks)
 			protected.GET("/tasks", taskHandler.GetTasks)
 			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
+			protected.POST("/tasks/:id/distractions", taskHandler.AdjustDistractions)
 			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
 
-			// Dashboard
-			protected.GET("/dashboard/stats", taskHandler.GetDashboardStats)
+			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
+
+			// Dashboard: today's metrics come from the analytics service's single metrics module
+			protected.GET("/dashboard/today", analyticsHandler.GetToday)
 
 			// Analytics (proxied to Python service with strict rate limiting)
 			analytics := protected.Group("/analytics")
 			analytics.Use(middleware.AnalyticsRateLimiter())
 			{
-				pythonURL := os.Getenv("PYTHON_SERVICE_URL")
-				if pythonURL == "" {
-					pythonURL = "https://discipline-py.up.railway.app/"
-				}
-				analyticsHandler := handlers.NewAnalyticsHandler(pythonURL, analyticsAPIKey)
 				analytics.GET("", analyticsHandler.GetAnalytics)
 				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)
 				analytics.POST("/smart-schedule", analyticsHandler.GenerateSmartSchedule)
@@ -95,7 +110,7 @@ func SetupRoutes(
 
 		// Admin-only routes
 		admin := api.Group("/admin")
-		admin.Use(middleware.AuthMiddleware(jwtSecret))
+		admin.Use(middleware.AuthMiddleware(jwtSecret, loadUser))
 		admin.Use(middleware.RequireRole(models.RoleAdmin))
 		{
 			admin.POST("/register", authHandler.RegisterAdmin)

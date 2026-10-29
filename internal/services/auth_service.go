@@ -1,8 +1,11 @@
 package services
 
 import (
+	"crypto/rand"
 	"errors"
+	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -11,27 +14,88 @@ import (
 	"discipline-backend/internal/repositories"
 )
 
+// ErrInvalidCredentials is returned by Login for an unknown email or wrong password.
+var ErrInvalidCredentials = errors.New("invalid email or password")
+
+// ErrEmailTaken is returned when registering with an email that already exists.
+var ErrEmailTaken = errors.New("user with this email already exists")
+
+// ErrPasswordPolicy is wrapped by every password policy violation.
+var ErrPasswordPolicy = errors.New("password does not meet policy")
+
+// Password policy: bcrypt only uses the first 72 bytes, so longer passwords are rejected.
+const (
+	minPasswordChars = 10
+	maxPasswordBytes = 72
+)
+
+// ValidatePassword enforces the password policy for registration and password changes.
+func ValidatePassword(password string) error {
+	if utf8.RuneCountInString(password) < minPasswordChars {
+		return fmt.Errorf("%w: password must be at least %d characters", ErrPasswordPolicy, minPasswordChars)
+	}
+	if len(password) > maxPasswordBytes {
+		return fmt.Errorf("%w: password must be at most %d bytes", ErrPasswordPolicy, maxPasswordBytes)
+	}
+	return nil
+}
+
+// ErrInvalidTimezone is returned for a time zone that is not a loadable IANA name.
+var ErrInvalidTimezone = errors.New("timezone must be a valid IANA time zone name, e.g. Asia/Tashkent")
+
+// ValidateTimezone accepts IANA names that time.LoadLocation can load ("Local" is rejected).
+func ValidateTimezone(tz string) error {
+	if tz == "" || tz == "Local" {
+		return ErrInvalidTimezone
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return ErrInvalidTimezone
+	}
+	return nil
+}
+
+// compareHashAndPassword is a variable so tests can observe calls.
+var compareHashAndPassword = bcrypt.CompareHashAndPassword
+
+// dummyPasswordHash is compared against when the email is unknown, so a login
+// for a missing account costs the same bcrypt work as one for a real account.
+var dummyPasswordHash = func() []byte {
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		panic(err)
+	}
+	hash, err := bcrypt.GenerateFromPassword(random, bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return hash
+}()
+
 // AuthService defines authentication business logic.
 type AuthService interface {
 	Register(name, email, password string) (*models.User, string, error)
 	RegisterAdmin(name, email, password string) (*models.User, string, error)
 	Login(email, password string) (*models.User, string, error)
 	GetUserByID(id uint) (*models.User, error)
-	UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error)
+	// UpdateProfile returns a replacement token when the password changed (older tokens are revoked).
+	UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, string, error)
+	// Logout revokes every token issued to the user so far.
+	Logout(userID uint) error
 }
+
+// AccessTokenTTL is the lifetime of access tokens.
+const AccessTokenTTL = 24 * time.Hour
 
 type authService struct {
 	userRepo  repositories.UserRepository
 	jwtSecret string
-	jwtExpiry int // hours
 }
 
 // NewAuthService creates a new AuthService.
-func NewAuthService(userRepo repositories.UserRepository, jwtSecret string, jwtExpiry int) AuthService {
+func NewAuthService(userRepo repositories.UserRepository, jwtSecret string) AuthService {
 	return &authService{
 		userRepo:  userRepo,
 		jwtSecret: jwtSecret,
-		jwtExpiry: jwtExpiry,
 	}
 }
 
@@ -47,10 +111,14 @@ func (s *authService) RegisterAdmin(name, email, password string) (*models.User,
 
 // registerWithRole is the shared registration logic.
 func (s *authService) registerWithRole(name, email, password, role string) (*models.User, string, error) {
+	if err := ValidatePassword(password); err != nil {
+		return nil, "", err
+	}
+
 	// Check if user already exists
 	existing, _ := s.userRepo.FindByEmail(email)
 	if existing != nil {
-		return nil, "", errors.New("user with this email already exists")
+		return nil, "", ErrEmailTaken
 	}
 
 	// Hash password
@@ -71,7 +139,7 @@ func (s *authService) registerWithRole(name, email, password, role string) (*mod
 	}
 
 	// Generate JWT
-	token, err := s.generateToken(user.ID, user.Role)
+	token, err := s.generateToken(user.ID, user.Role, user.TokenVersion)
 	if err != nil {
 		return nil, "", errors.New("failed to generate token")
 	}
@@ -83,16 +151,18 @@ func (s *authService) registerWithRole(name, email, password, role string) (*mod
 func (s *authService) Login(email, password string) (*models.User, string, error) {
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
-		return nil, "", errors.New("invalid email or password")
+		// Same bcrypt cost as a real account, so response time doesn't reveal unknown emails.
+		_ = compareHashAndPassword(dummyPasswordHash, []byte(password))
+		return nil, "", ErrInvalidCredentials
 	}
 
 	// Compare password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return nil, "", errors.New("invalid email or password")
+	if err := compareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+		return nil, "", ErrInvalidCredentials
 	}
 
 	// Generate JWT
-	token, err := s.generateToken(user.ID, user.Role)
+	token, err := s.generateToken(user.ID, user.Role, user.TokenVersion)
 	if err != nil {
 		return nil, "", errors.New("failed to generate token")
 	}
@@ -106,51 +176,95 @@ func (s *authService) GetUserByID(id uint) (*models.User, error) {
 }
 
 // UpdateProfile updates user name, email, and optionally password.
-func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error) {
+// Changing the email or password requires the correct current password.
+func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, string, error) {
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
-		return nil, errors.New("user not found")
+		return nil, "", errors.New("user not found")
+	}
+
+	if timezone != "" {
+		if err := ValidateTimezone(timezone); err != nil {
+			return nil, "", err
+		}
+		user.Timezone = timezone
+	}
+
+	changingEmail := email != "" && email != user.Email
+	changingPassword := newPassword != ""
+
+	// Changing the login email or password requires the current password.
+	if changingEmail || changingPassword {
+		if oldPassword == "" {
+			if changingEmail {
+				return nil, "", errors.New("current password is required to change email")
+			}
+			return nil, "", errors.New("current password is required to set a new password")
+		}
+		if changingPassword {
+			if err := ValidatePassword(newPassword); err != nil {
+				return nil, "", err
+			}
+		}
+		if err := compareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
+			return nil, "", errors.New("current password is incorrect")
+		}
 	}
 
 	if name != "" {
 		user.Name = name
 	}
-	if email != "" && email != user.Email {
+	if changingEmail {
 		existing, _ := s.userRepo.FindByEmail(email)
 		if existing != nil && existing.ID != id {
-			return nil, errors.New("email already in use")
+			return nil, "", errors.New("email already in use")
 		}
 		user.Email = email
 	}
 
-	if newPassword != "" {
-		if oldPassword == "" {
-			return nil, errors.New("current password is required to set a new password")
-		}
-		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
-			return nil, errors.New("current password is incorrect")
-		}
+	if changingPassword {
 		hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 		if err != nil {
-			return nil, errors.New("failed to hash password")
+			return nil, "", errors.New("failed to hash password")
 		}
 		user.Password = string(hashed)
 	}
 
 	if err := s.userRepo.Update(user); err != nil {
-		return nil, errors.New("failed to update profile")
+		return nil, "", errors.New("failed to update profile")
 	}
 
-	return user, nil
+	if !changingPassword {
+		return user, "", nil
+	}
+	// Revoke every existing session and issue a token for this one.
+	version, err := s.userRepo.IncrementTokenVersion(id)
+	if err != nil {
+		return nil, "", errors.New("failed to update profile")
+	}
+	user.TokenVersion = version
+	token, err := s.generateToken(user.ID, user.Role, version)
+	if err != nil {
+		return nil, "", errors.New("failed to generate token")
+	}
+	return user, token, nil
 }
 
-// generateToken creates a signed JWT with user ID and role claims.
-func (s *authService) generateToken(userID uint, role string) (string, error) {
+// Logout revokes every token issued to the user so far.
+func (s *authService) Logout(userID uint) error {
+	_, err := s.userRepo.IncrementTokenVersion(userID)
+	return err
+}
+
+// generateToken creates a signed JWT with user ID, role and token version claims.
+func (s *authService) generateToken(userID uint, role string, tokenVersion int64) (string, error) {
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"user_id": userID,
 		"role":    role,
-		"exp":     time.Now().Add(time.Duration(s.jwtExpiry) * time.Hour).Unix(),
-		"iat":     time.Now().Unix(),
+		"tv":      tokenVersion,
+		"exp":     now.Add(AccessTokenTTL).Unix(),
+		"iat":     now.Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

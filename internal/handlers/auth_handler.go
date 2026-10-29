@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"errors"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,12 +14,13 @@ import (
 
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
-	authService services.AuthService
+	authService   services.AuthService
+	loginThrottle *services.LoginThrottle
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(authService services.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService services.AuthService, loginThrottle *services.LoginThrottle) *AuthHandler {
+	return &AuthHandler{authService: authService, loginThrottle: loginThrottle}
 }
 
 // --- Request / Response types ---
@@ -25,7 +29,7 @@ func NewAuthHandler(authService services.AuthService) *AuthHandler {
 type RegisterRequest struct {
 	Name     string `json:"name" binding:"required,min=2,max=100" example:"John Doe"`
 	Email    string `json:"email" binding:"required,email" example:"john@example.com"`
-	Password string `json:"password" binding:"required,min=6" example:"securepass123"`
+	Password string `json:"password" binding:"required" example:"securepass123"` // policy: 10+ chars, max 72 bytes
 }
 
 // LoginRequest is the expected JSON body for login.
@@ -50,6 +54,19 @@ type ErrorResponse struct {
 // UserResponse wraps user info for the /me endpoint.
 type UserResponse struct {
 	User *models.User `json:"user"`
+}
+
+// respondRegisterError maps registration errors: policy violations are 400,
+// an existing email stays 409, anything else is 500.
+func respondRegisterError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, services.ErrPasswordPolicy):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, services.ErrEmailTaken):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Registration failed"})
+	}
 }
 
 // --- Handlers ---
@@ -77,9 +94,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	user, token, err := h.authService.Register(req.Name, req.Email, req.Password)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"error": err.Error(),
-		})
+		respondRegisterError(c, err)
 		return
 	}
 
@@ -100,6 +115,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 // @Success      200   {object}  AuthResponse
 // @Failure      400   {object}  ErrorResponse
 // @Failure      401   {object}  ErrorResponse
+// @Failure      429   {object}  ErrorResponse
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -111,13 +127,29 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	user, token, err := h.authService.Login(req.Email, req.Password)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": err.Error(),
+	if locked, retryAfter := h.loginThrottle.Locked(req.Email); locked {
+		c.Header("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": "Too many failed login attempts. Please try again later.",
 		})
 		return
 	}
+
+	user, token, err := h.authService.Login(req.Email, req.Password)
+	if err != nil {
+		if errors.Is(err, services.ErrInvalidCredentials) {
+			h.loginThrottle.RecordFailure(req.Email)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Login failed",
+		})
+		return
+	}
+	h.loginThrottle.Reset(req.Email)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Login successful",
@@ -183,9 +215,7 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 
 	user, token, err := h.authService.RegisterAdmin(req.Name, req.Email, req.Password)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"error": err.Error(),
-		})
+		respondRegisterError(c, err)
 		return
 	}
 
@@ -198,15 +228,16 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 
 // UpdateProfileRequest is the expected JSON body for profile updates.
 type UpdateProfileRequest struct {
-	Name        string `json:"name,omitempty" example:"Jane Doe"`
-	Email       string `json:"email,omitempty" example:"jane@example.com"`
-	OldPassword string `json:"oldPassword,omitempty" example:"oldpass123"`
+	Name        string `json:"name,omitempty" binding:"omitempty,max=100" example:"Jane Doe"`
+	Email       string `json:"email,omitempty" binding:"omitempty,email" example:"jane@example.com"`
+	OldPassword string `json:"oldPassword,omitempty" example:"oldpass123"`                            // required to change email or password
+	Timezone    string `json:"timezone,omitempty" binding:"omitempty,max=64" example:"Asia/Tashkent"` // IANA name
 	NewPassword string `json:"newPassword,omitempty" example:"newpass456"`
 }
 
 // UpdateProfile godoc
 // @Summary      Update user profile
-// @Description  Updates the authenticated user's name, email, and/or password
+// @Description  Updates the authenticated user's name, email, and/or password. Changing email or password requires oldPassword.
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
@@ -227,7 +258,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.UpdateProfile(userID, req.Name, req.Email, req.OldPassword, req.NewPassword)
+	user, token, err := h.authService.UpdateProfile(userID, req.Name, req.Email, req.OldPassword, req.NewPassword, req.Timezone)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -235,7 +266,26 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user": user,
-	})
+	resp := gin.H{"user": user}
+	if token != "" {
+		// The password changed: all older tokens are revoked, this one replaces them.
+		resp["token"] = token
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// Logout godoc
+// @Summary      Log out everywhere
+// @Description  Revokes every token issued to the authenticated user
+// @Tags         Auth
+// @Security     BearerAuth
+// @Success      204
+// @Failure      401  {object}  ErrorResponse
+// @Router       /auth/logout [post]
+func (h *AuthHandler) Logout(c *gin.Context) {
+	if err := h.authService.Logout(c.MustGet("userID").(uint)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Logout failed"})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
