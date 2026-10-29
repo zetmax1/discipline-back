@@ -78,7 +78,7 @@ type errTaskService struct {
 }
 
 func (f *errTaskService) DeleteTask(id, userID uint) error { return f.err }
-func (f *errTaskService) UpdateTask(id, userID uint, updates map[string]interface{}) (*models.Task, error) {
+func (f *errTaskService) UpdateTask(id, userID uint, upd services.TaskUpdate) (*models.Task, error) {
 	return nil, f.err
 }
 

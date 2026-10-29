@@ -339,3 +339,12 @@ func TestInternalToken_CarriesUserTimezone(t *testing.T) {
 		t.Fatalf("internal token must carry tz claim, got %v", claims["tz"])
 	}
 }
+
+func doRequestWithHeader(r http.Handler, method, target, body, key, value string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(key, value)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}

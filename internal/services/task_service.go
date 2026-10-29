@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ type TaskService interface {
 	BulkCreateTasks(tasks []*models.Task) error
 	GetTask(id, userID uint) (*models.Task, error)
 	GetTasks(userID uint, date string) ([]models.Task, error)
-	UpdateTask(id, userID uint, updates map[string]interface{}) (*models.Task, error)
+	UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task, error)
 	DeleteTask(id, userID uint) error
 	GetDashboardStats(userID uint, date string) (*DashboardStats, error)
 }
@@ -39,12 +40,25 @@ func NewTaskService(taskRepo repositories.TaskRepository) TaskService {
 	return &taskService{taskRepo: taskRepo}
 }
 
+// CreateTask validates the block and inserts it, rejecting overlaps (ErrTaskOverlap).
 func (s *taskService) CreateTask(task *models.Task) error {
-	return s.taskRepo.Create(task)
+	if err := validateNewTask(task); err != nil {
+		return err
+	}
+	return s.taskRepo.CreateTasks(task.UserID, []*models.Task{task})
 }
 
+// BulkCreateTasks validates every block, then inserts all or none.
 func (s *taskService) BulkCreateTasks(tasks []*models.Task) error {
-	return s.taskRepo.CreateBatch(tasks)
+	if len(tasks) == 0 {
+		return nil
+	}
+	for i, t := range tasks {
+		if err := validateNewTask(t); err != nil {
+			return fmt.Errorf("tasks[%d]: %w", i, err)
+		}
+	}
+	return s.taskRepo.CreateTasks(tasks[0].UserID, tasks)
 }
 
 func (s *taskService) GetTask(id, userID uint) (*models.Task, error) {
@@ -58,42 +72,11 @@ func (s *taskService) GetTasks(userID uint, date string) ([]models.Task, error) 
 	return s.taskRepo.FindByUser(userID)
 }
 
-func (s *taskService) UpdateTask(id, userID uint, updates map[string]interface{}) (*models.Task, error) {
-	task, err := s.taskRepo.FindByID(id, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply updates
-	if v, ok := updates["name"]; ok {
-		task.Name = v.(string)
-	}
-	if v, ok := updates["category"]; ok {
-		task.Category = v.(string)
-	}
-	if v, ok := updates["startTime"]; ok {
-		task.StartTime = models.ClockTime(v.(string))
-	}
-	if v, ok := updates["endTime"]; ok {
-		task.EndTime = models.ClockTime(v.(string))
-	}
-	if v, ok := updates["status"]; ok {
-		task.Status = v.(string)
-	}
-	if v, ok := updates["distractions"]; ok {
-		task.Distractions = int(v.(float64))
-	}
-	if v, ok := updates["energy"]; ok {
-		task.Energy = int(v.(float64))
-	}
-	if v, ok := updates["date"]; ok {
-		task.Date = models.Date(v.(string))
-	}
-
-	if err := s.taskRepo.Update(task); err != nil {
-		return nil, err
-	}
-	return task, nil
+// UpdateTask applies a validated partial update; only provided fields are written.
+func (s *taskService) UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task, error) {
+	return s.taskRepo.UpdateTask(id, userID, func(current models.Task) (map[string]any, models.Task, bool, error) {
+		return mergeTaskUpdate(current, upd)
+	})
 }
 
 func (s *taskService) DeleteTask(id, userID uint) error {

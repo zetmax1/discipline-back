@@ -25,7 +25,7 @@ func TestTaskRepository_TypedColumnsRoundTrip(t *testing.T) {
 	repo := NewTaskRepository(db)
 
 	task := &models.Task{UserID: uid, Name: "Late", Category: "study", StartTime: "21:30", EndTime: "24:00", Date: "2026-10-29", Status: "pending", Energy: 3}
-	if err := repo.Create(task); err != nil {
+	if err := repo.CreateTasks(uid, []*models.Task{task}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	got, err := repo.FindByUserAndDate(uid, "2026-10-29")

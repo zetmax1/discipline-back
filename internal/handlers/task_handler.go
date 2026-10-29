@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"discipline-backend/internal/models"
+	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/services"
 )
 
@@ -26,12 +27,12 @@ func NewTaskHandler(taskService services.TaskService) *TaskHandler {
 
 // CreateTaskRequest is the expected JSON body for creating a task.
 type CreateTaskRequest struct {
-	Name      string `json:"name" binding:"required,min=1,max=200" example:"Morning routine"`
-	Category  string `json:"category" binding:"required,oneof=deep-work study admin gym rest" example:"deep-work"`
-	StartTime string `json:"startTime" binding:"required" example:"09:00"`
-	EndTime   string `json:"endTime" binding:"required" example:"10:00"`
-	Energy    int    `json:"energy" binding:"required,min=1,max=5" example:"4"`
-	Date      string `json:"date" binding:"required" example:"2026-03-02"`
+	Name      string `json:"name" binding:"required" example:"Morning routine"` // 1-120 chars
+	Category  string `json:"category" binding:"required" example:"deep-work"`   // deep-work|study|admin|gym|rest
+	StartTime string `json:"startTime" binding:"required" example:"09:00"`      // HH:MM
+	EndTime   string `json:"endTime" binding:"required" example:"10:00"`        // HH:MM, after start, ≤ 24:00
+	Energy    int    `json:"energy" binding:"required" example:"4"`             // 1-5
+	Date      string `json:"date" binding:"required" example:"2026-03-02"`      // YYYY-MM-DD
 }
 
 // UpdateTaskRequest allows partial updates.
@@ -57,13 +58,19 @@ type TaskListResponse struct {
 	Count int           `json:"count"`
 }
 
-// respondTaskError maps a missing task to 404 and any other failure to 500.
+// respondTaskError maps validation errors to 400, overlaps to 409, a missing
+// task to 404 and any other failure to 500.
 func respondTaskError(c *gin.Context, err error) {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	switch {
+	case errors.Is(err, services.ErrInvalidTask):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, repositories.ErrTaskOverlap):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	case errors.Is(err, gorm.ErrRecordNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
-		return
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task"})
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task"})
 }
 
 // --- Handlers ---
@@ -78,6 +85,7 @@ func respondTaskError(c *gin.Context, err error) {
 // @Param        body  body  CreateTaskRequest  true  "Task data"
 // @Success      201   {object}  map[string]interface{}
 // @Failure      400   {object}  ErrorResponse
+// @Failure      409   {object}  ErrorResponse
 // @Router       /tasks [post]
 func (h *TaskHandler) CreateTask(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
@@ -103,9 +111,7 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	}
 
 	if err := h.taskService.CreateTask(task); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to create task",
-		})
+		respondTaskError(c, err)
 		return
 	}
 
@@ -153,9 +159,7 @@ func (h *TaskHandler) BulkCreateTasks(c *gin.Context) {
 	}
 
 	if err := h.taskService.BulkCreateTasks(tasks); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to create multiple tasks",
-		})
+		respondTaskError(c, err)
 		return
 	}
 
@@ -228,31 +232,9 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 		return
 	}
 
-	// Build updates map from non-nil fields
-	updates := make(map[string]interface{})
-	if req.Name != nil {
-		updates["name"] = *req.Name
-	}
-	if req.Category != nil {
-		updates["category"] = *req.Category
-	}
-	if req.StartTime != nil {
-		updates["startTime"] = *req.StartTime
-	}
-	if req.EndTime != nil {
-		updates["endTime"] = *req.EndTime
-	}
-	if req.Status != nil {
-		updates["status"] = *req.Status
-	}
-	if req.Distractions != nil {
-		updates["distractions"] = float64(*req.Distractions)
-	}
-	if req.Energy != nil {
-		updates["energy"] = float64(*req.Energy)
-	}
-	if req.Date != nil {
-		updates["date"] = *req.Date
+	updates := services.TaskUpdate{
+		Name: req.Name, Category: req.Category, StartTime: req.StartTime, EndTime: req.EndTime,
+		Status: req.Status, Date: req.Date, Distractions: req.Distractions, Energy: req.Energy,
 	}
 
 	task, err := h.taskService.UpdateTask(uint(taskID), userID, updates)
