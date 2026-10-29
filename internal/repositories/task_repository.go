@@ -67,8 +67,11 @@ func (r *taskRepository) Update(task *models.Task) error {
 
 func (r *taskRepository) Delete(id, userID uint) error {
 	result := r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Task{})
+	if result.Error != nil {
+		return result.Error
+	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
-	return result.Error
+	return nil
 }

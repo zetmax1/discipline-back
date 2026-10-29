@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/services"
@@ -67,5 +69,39 @@ func TestBulkCreate_RejectsEmptyList(t *testing.T) {
 	w := doRequest(taskRouter(svc), http.MethodPost, "/tasks/bulk", `{"tasks":[]}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for an empty list, got %d", w.Code)
+	}
+}
+
+type errTaskService struct {
+	services.TaskService
+	err error
+}
+
+func (f *errTaskService) DeleteTask(id, userID uint) error { return f.err }
+func (f *errTaskService) UpdateTask(id, userID uint, updates map[string]interface{}) (*models.Task, error) {
+	return nil, f.err
+}
+
+func TestTaskHandlers_MapDBErrorsTo500AndMissingTo404(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		err  error
+		want int
+	}{
+		{gorm.ErrRecordNotFound, http.StatusNotFound},
+		{errors.New("connection refused"), http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		h := NewTaskHandler(&errTaskService{err: tc.err})
+		r := gin.New()
+		r.Use(func(c *gin.Context) { c.Set("userID", uint(1)) })
+		r.DELETE("/tasks/:id", h.DeleteTask)
+		r.PUT("/tasks/:id", h.UpdateTask)
+		if w := doRequest(r, http.MethodDelete, "/tasks/7", ""); w.Code != tc.want {
+			t.Errorf("DELETE with %v: expected %d, got %d", tc.err, tc.want, w.Code)
+		}
+		if w := doRequest(r, http.MethodPut, "/tasks/7", `{"name":"x"}`); w.Code != tc.want {
+			t.Errorf("PUT with %v: expected %d, got %d", tc.err, tc.want, w.Code)
+		}
 	}
 }

@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/services"
@@ -56,6 +58,15 @@ type TaskListResponse struct {
 	Count int           `json:"count"`
 }
 
+// respondTaskError maps a missing task to 404 and any other failure to 500.
+func respondTaskError(c *gin.Context, err error) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task"})
+}
+
 // --- Handlers ---
 
 // CreateTask godoc
@@ -85,10 +96,10 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 		UserID:    userID,
 		Name:      req.Name,
 		Category:  req.Category,
-		StartTime: req.StartTime,
-		EndTime:   req.EndTime,
+		StartTime: models.ClockTime(req.StartTime),
+		EndTime:   models.ClockTime(req.EndTime),
 		Energy:    req.Energy,
-		Date:      req.Date,
+		Date:      models.Date(req.Date),
 		Status:    models.StatusPending,
 	}
 
@@ -134,10 +145,10 @@ func (h *TaskHandler) BulkCreateTasks(c *gin.Context) {
 			UserID:    userID,
 			Name:      tr.Name,
 			Category:  tr.Category,
-			StartTime: tr.StartTime,
-			EndTime:   tr.EndTime,
+			StartTime: models.ClockTime(tr.StartTime),
+			EndTime:   models.ClockTime(tr.EndTime),
 			Energy:    tr.Energy,
-			Date:      tr.Date,
+			Date:      models.Date(tr.Date),
 			Status:    models.StatusPending,
 		})
 	}
@@ -247,7 +258,7 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 
 	task, err := h.taskService.UpdateTask(uint(taskID), userID, updates)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		respondTaskError(c, err)
 		return
 	}
 
@@ -276,7 +287,7 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	}
 
 	if err := h.taskService.DeleteTask(uint(taskID), userID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		respondTaskError(c, err)
 		return
 	}
 

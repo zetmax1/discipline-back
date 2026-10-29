@@ -2,11 +2,13 @@ package config
 
 import (
 	"bytes"
+	"database/sql"
 	"context"
 	"strings"
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/gorm"
 )
 
@@ -240,5 +242,17 @@ func TestGormLogger_WarnLevelAndQuiet(t *testing.T) {
 	l.Warn(ctx, "warn message")
 	if !strings.Contains(buf.String(), "warn message") {
 		t.Fatal("warnings must still be logged")
+	}
+}
+
+func TestConfigurePool(t *testing.T) {
+	db, err := sql.Open("pgx", "postgres://invalid.invalid/db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	configurePool(db)
+	if got := db.Stats().MaxOpenConnections; got != 10 {
+		t.Fatalf("MaxOpenConns = %d, want 10", got)
 	}
 }

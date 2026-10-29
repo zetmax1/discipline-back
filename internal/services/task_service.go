@@ -72,10 +72,10 @@ func (s *taskService) UpdateTask(id, userID uint, updates map[string]interface{}
 		task.Category = v.(string)
 	}
 	if v, ok := updates["startTime"]; ok {
-		task.StartTime = v.(string)
+		task.StartTime = models.ClockTime(v.(string))
 	}
 	if v, ok := updates["endTime"]; ok {
-		task.EndTime = v.(string)
+		task.EndTime = models.ClockTime(v.(string))
 	}
 	if v, ok := updates["status"]; ok {
 		task.Status = v.(string)
@@ -87,7 +87,7 @@ func (s *taskService) UpdateTask(id, userID uint, updates map[string]interface{}
 		task.Energy = int(v.(float64))
 	}
 	if v, ok := updates["date"]; ok {
-		task.Date = v.(string)
+		task.Date = models.Date(v.(string))
 	}
 
 	if err := s.taskRepo.Update(task); err != nil {
@@ -117,7 +117,7 @@ func (s *taskService) GetDashboardStats(userID uint, date string) (*DashboardSta
 		if t.Status == models.StatusCompleted {
 			completed++
 		}
-		hours := timeDiffHours(t.StartTime, t.EndTime)
+		hours := timeDiffHours(string(t.StartTime), string(t.EndTime))
 		totalHours += hours
 		if t.Category == models.CategoryDeepWork {
 			deepWorkHours += hours

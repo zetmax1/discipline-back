@@ -1,6 +1,8 @@
 package config
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"discipline-backend/internal/models"
+	"discipline-backend/internal/dbmigrate"
 )
 
 // postgresDSN builds the connection string; sslmode comes from DB_SSLMODE (default require).
@@ -34,7 +36,14 @@ func newGormLogger(w io.Writer) logger.Interface {
 	})
 }
 
-// ConnectDB opens a GORM connection to PostgreSQL and auto-migrates models.
+// configurePool bounds the connection pool (Railway Postgres allows ~100 connections in total).
+func configurePool(db *sql.DB) {
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+}
+
+// ConnectDB opens a GORM connection to PostgreSQL and verifies the schema is fully migrated.
 func ConnectDB(cfg *Config) *gorm.DB {
 	db, err := gorm.Open(postgres.Open(postgresDSN(cfg)), &gorm.Config{Logger: newGormLogger(os.Stdout)})
 	if err != nil {
@@ -43,12 +52,16 @@ func ConnectDB(cfg *Config) *gorm.DB {
 
 	log.Println("Database connected successfully")
 
-	// Auto-migrate models
-	if err := db.AutoMigrate(&models.User{}, &models.Task{}, &models.VocabularyWord{}); err != nil {
-		log.Fatalf("Failed to migrate database: %v", err)
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("Failed to access database pool: %v", err)
 	}
+	configurePool(sqlDB)
 
-	log.Println("Database migration completed")
+	// Schema changes are applied with the migrate command, never at startup.
+	if err := dbmigrate.RequireLatest(context.Background(), sqlDB); err != nil {
+		log.Fatalf("Database schema check failed: %v", err)
+	}
 
 	return db
 }

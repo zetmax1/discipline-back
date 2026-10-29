@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"discipline-backend/internal/services"
 )
@@ -18,6 +20,15 @@ type VocabHandler struct {
 // NewVocabHandler creates a new VocabHandler.
 func NewVocabHandler(vocabService services.VocabService) *VocabHandler {
 	return &VocabHandler{vocabService: vocabService}
+}
+
+// respondWordError maps a missing word to 404 and any other failure to 500.
+func respondWordError(c *gin.Context, err error) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Word not found"})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update word"})
 }
 
 // GetTodayWords godoc
@@ -69,7 +80,7 @@ func (h *VocabHandler) ToggleLearned(c *gin.Context) {
 
 	word, err := h.vocabService.ToggleLearned(uint(wordID), userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Word not found"})
+		respondWordError(c, err)
 		return
 	}
 
@@ -96,7 +107,7 @@ func (h *VocabHandler) ToggleSaved(c *gin.Context) {
 
 	word, err := h.vocabService.ToggleSaved(uint(wordID), userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Word not found"})
+		respondWordError(c, err)
 		return
 	}
 

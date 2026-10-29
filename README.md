@@ -124,6 +124,29 @@ the server refuses to start without them:
 
 For local development also set `APP_ENV=development` and, if your local Postgres has no TLS, `DB_SSLMODE=disable`.
 
+## Database migrations
+
+The schema is managed by versioned [goose](https://github.com/pressly/goose) migrations in
+`migrations/` (embedded in the binaries). The server never changes the schema; it refuses to
+start unless every migration has been applied.
+
+```bash
+go run ./cmd/migrate status                       # uses DATABASE_URL or the DB_* variables
+go run ./cmd/migrate up
+go run ./cmd/migrate -database "postgres://..." down   # roll back one step
+```
+
+## Integration tests
+
+Database tests run against a throwaway Postgres and are skipped without `TEST_DATABASE_URL`:
+
+```bash
+docker compose -f docker-compose.test.yml up -d --wait
+export TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:55432/postgres?sslmode=disable'
+go test -race ./...
+docker compose -f docker-compose.test.yml down
+```
+
 ## Contributing
 
 1. Fork the repository
