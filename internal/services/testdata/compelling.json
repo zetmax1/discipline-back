@@ -1,0 +1,30 @@
+[
+  {
+    "word": "compelling",
+    "meanings": [
+      {
+        "partOfSpeech": "verb",
+        "definitions": [
+          {"definition": "To drive together, round up"},
+          {"definition": "To overpower; to subdue."}
+        ],
+        "synonyms": []
+      },
+      {
+        "partOfSpeech": "noun",
+        "definitions": [
+          {"definition": "An act of compulsion; an obliging somebody to do something."}
+        ],
+        "synonyms": []
+      },
+      {
+        "partOfSpeech": "adjective",
+        "definitions": [
+          {"definition": "Strongly or irresistibly evoking interest or attention.", "example": "A compelling argument."},
+          {"definition": "Forceful; demanding attention."}
+        ],
+        "synonyms": ["convincing"]
+      }
+    ]
+  }
+]
