@@ -292,3 +292,21 @@ func mustScan(t *testing.T, db *sql.DB, q string, dest ...any) {
 		t.Fatalf("%s: %v", q, err)
 	}
 }
+
+func TestUserTimezoneColumnBackfillsExistingUsers(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 2); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	if err := dbmigrate.UpTo(ctx, db, 3); err != nil {
+		t.Fatalf("timezone migration: %v", err)
+	}
+	var tz, nullable string
+	mustScan(t, db, `SELECT timezone, (SELECT is_nullable FROM information_schema.columns
+	                  WHERE table_name='users' AND column_name='timezone') FROM users WHERE id = 1`, &tz, &nullable)
+	if tz != "Asia/Tashkent" || nullable != "NO" {
+		t.Fatalf("existing users must get Asia/Tashkent and the column must be NOT NULL; got %q nullable=%s", tz, nullable)
+	}
+}

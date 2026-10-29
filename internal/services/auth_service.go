@@ -40,6 +40,20 @@ func ValidatePassword(password string) error {
 	return nil
 }
 
+// ErrInvalidTimezone is returned for a time zone that is not a loadable IANA name.
+var ErrInvalidTimezone = errors.New("timezone must be a valid IANA time zone name, e.g. Asia/Tashkent")
+
+// ValidateTimezone accepts IANA names that time.LoadLocation can load ("Local" is rejected).
+func ValidateTimezone(tz string) error {
+	if tz == "" || tz == "Local" {
+		return ErrInvalidTimezone
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return ErrInvalidTimezone
+	}
+	return nil
+}
+
 // compareHashAndPassword is a variable so tests can observe calls.
 var compareHashAndPassword = bcrypt.CompareHashAndPassword
 
@@ -63,7 +77,7 @@ type AuthService interface {
 	RegisterAdmin(name, email, password string) (*models.User, string, error)
 	Login(email, password string) (*models.User, string, error)
 	GetUserByID(id uint) (*models.User, error)
-	UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error)
+	UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, error)
 }
 
 type authService struct {
@@ -159,10 +173,17 @@ func (s *authService) GetUserByID(id uint) (*models.User, error) {
 
 // UpdateProfile updates user name, email, and optionally password.
 // Changing the email or password requires the correct current password.
-func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error) {
+func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, error) {
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
 		return nil, errors.New("user not found")
+	}
+
+	if timezone != "" {
+		if err := ValidateTimezone(timezone); err != nil {
+			return nil, err
+		}
+		user.Timezone = timezone
 	}
 
 	changingEmail := email != "" && email != user.Email

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	_ "time/tzdata" // the alpine runtime image has no zoneinfo; users' IANA zones must load
 
 	"github.com/gin-gonic/gin"
 
@@ -68,7 +69,14 @@ func main() {
 	}
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs)
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs,
+		func(id uint) (*middleware.AuthUser, error) {
+			u, err := userRepo.FindByID(id)
+			if err != nil {
+				return nil, err
+			}
+			return &middleware.AuthUser{Role: u.Role, Timezone: u.Timezone}, nil
+		})
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

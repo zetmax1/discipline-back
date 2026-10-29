@@ -54,14 +54,23 @@ func NewAnalyticsHandler(pythonServiceURL, internalSecret string) *AnalyticsHand
 	}
 }
 
+// internalClaims identify the user and their IANA time zone to the Python service.
+type internalClaims struct {
+	TZ string `json:"tz"`
+	jwt.RegisteredClaims
+}
+
 // internalToken signs a short-lived HS256 token identifying the user to the Python service.
-func (h *AnalyticsHandler) internalToken(userID uint) (string, error) {
+func (h *AnalyticsHandler) internalToken(userID uint, tz string) (string, error) {
 	now := time.Now()
-	claims := jwt.RegisteredClaims{
-		Subject:   strconv.FormatUint(uint64(userID), 10),
-		Audience:  jwt.ClaimStrings{internalTokenAudience},
-		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(internalTokenTTL)),
+	claims := internalClaims{
+		TZ: tz,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   strconv.FormatUint(uint64(userID), 10),
+			Audience:  jwt.ClaimStrings{internalTokenAudience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(internalTokenTTL)),
+		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.internalSecret)
 }
@@ -132,7 +141,7 @@ func (h *AnalyticsHandler) upstreamURL(path string, query url.Values) string {
 // forward sends the request to the Python service on behalf of the authenticated
 // user and relays its JSON response.
 func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body []byte) {
-	token, err := h.internalToken(c.MustGet("userID").(uint))
+	token, err := h.internalToken(c.MustGet("userID").(uint), userLocation(c).String())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
 		return

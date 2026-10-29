@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -180,9 +179,9 @@ func (h *TaskHandler) GetTasks(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	date := c.Query("date")
 
-	// Default to today if no date provided
+	// Default to today in the user's time zone
 	if date == "" {
-		date = time.Now().Format("2006-01-02")
+		date = userToday(c)
 	}
 
 	tasks, err := h.taskService.GetTasks(userID, date)
@@ -309,7 +308,7 @@ func (h *TaskHandler) GetDashboardStats(c *gin.Context) {
 	date := c.Query("date")
 
 	if date == "" {
-		date = time.Now().Format("2006-01-02")
+		date = userToday(c)
 	}
 
 	stats, err := h.taskService.GetDashboardStats(userID, date)

@@ -1,16 +1,28 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 )
 
-// AuthMiddleware validates the JWT token from the Authorization header.
-// Sets both "userID" and "userRole" in Gin context.
-func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
+// AuthUser is the per-request user state loaded from the database.
+type AuthUser struct {
+	Role     string
+	Timezone string
+}
+
+// UserLoader loads a user's current auth state; it returns gorm.ErrRecordNotFound
+// when the user no longer exists.
+type UserLoader func(userID uint) (*AuthUser, error)
+
+// AuthMiddleware validates the JWT token from the Authorization header, then loads
+// the user from the database. Sets "userID", "userRole" and "userTimezone".
+func AuthMiddleware(jwtSecret string, loadUser UserLoader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get the Authorization header
 		authHeader := c.GetHeader("Authorization")
@@ -66,15 +78,25 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		// Get role from claims
-		role, _ := claims["role"].(string)
-		if role == "" {
-			role = "user" // fallback for tokens issued before role was added
+		userID := uint(userIDFloat)
+		user, err := loadUser(userID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid or expired token",
+			})
+			return
+		}
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to load user",
+			})
+			return
 		}
 
-		// Set user ID and role in context for downstream handlers
-		c.Set("userID", uint(userIDFloat))
-		c.Set("userRole", role)
+		// Role and time zone come from the database, so changes apply immediately.
+		c.Set("userID", userID)
+		c.Set("userRole", user.Role)
+		c.Set("userTimezone", user.Timezone)
 		c.Next()
 	}
 }

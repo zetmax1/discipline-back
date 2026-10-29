@@ -2,6 +2,9 @@ package models
 
 import "time"
 
+// DefaultTimezone matches the users.timezone column default.
+const DefaultTimezone = "Asia/Tashkent"
+
 // Role constants
 const (
 	RoleUser  = "user"
@@ -15,6 +18,7 @@ type User struct {
 	Email     string    `gorm:"uniqueIndex;not null" json:"email"`
 	Password  string    `gorm:"not null" json:"-"` // excluded from JSON responses
 	Role      string    `gorm:"not null;default:user" json:"role"`
+	Timezone  string    `gorm:"not null;default:Asia/Tashkent" json:"timezone"` // IANA name
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

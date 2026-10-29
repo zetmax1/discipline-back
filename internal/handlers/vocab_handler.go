@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -45,7 +44,7 @@ func (h *VocabHandler) GetTodayWords(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	date := c.Query("date")
 	if date == "" {
-		date = time.Now().Format("2006-01-02")
+		date = userToday(c)
 	}
 
 	words, err := h.vocabService.GetTodayWords(userID, date)

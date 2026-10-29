@@ -317,3 +317,25 @@ func TestAnalyticsProxy_OversizeUpstreamResponse(t *testing.T) {
 		t.Fatalf("expected 502 for an oversize upstream response, got %d", w.Code)
 	}
 }
+
+func TestInternalToken_CarriesUserTimezone(t *testing.T) {
+	up := &upstreamRecorder{}
+	srv := up.server(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("userID", uint(1)); c.Set("userTimezone", "Asia/Tashkent") })
+	r.GET("/analytics", NewAnalyticsHandler(srv.URL, testInternalSecret).GetAnalytics)
+	if w := doRequest(r, http.MethodGet, "/analytics", ""); w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	raw := strings.TrimPrefix(up.lastAuth, "Bearer ")
+	claims := jwt.MapClaims{}
+	if _, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (interface{}, error) {
+		return []byte(testInternalSecret), nil
+	}, jwt.WithAudience("discipline-py")); err != nil {
+		t.Fatal(err)
+	}
+	if claims["tz"] != "Asia/Tashkent" {
+		t.Fatalf("internal token must carry tz claim, got %v", claims["tz"])
+	}
+}

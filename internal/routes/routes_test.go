@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"discipline-backend/internal/handlers"
+	"discipline-backend/internal/middleware"
 )
 
 func newTestRouter(enableDocs bool) *gin.Engine {
@@ -16,7 +17,8 @@ func newTestRouter(enableDocs bool) *gin.Engine {
 	r := gin.New()
 	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
 		"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
-		"internal-secret-for-tests-0123456789", enableDocs)
+		"internal-secret-for-tests-0123456789", enableDocs,
+		func(uint) (*middleware.AuthUser, error) { return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil })
 	return r
 }
 

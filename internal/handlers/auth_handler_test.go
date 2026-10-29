@@ -33,7 +33,7 @@ func (f *fakeAuthService) Login(email, password string) (*models.User, string, e
 func (f *fakeAuthService) GetUserByID(id uint) (*models.User, error) {
 	return &models.User{ID: id, Email: f.email}, nil
 }
-func (f *fakeAuthService) UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error) {
+func (f *fakeAuthService) UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, error) {
 	return &models.User{ID: id, Name: name, Email: email}, nil
 }
 

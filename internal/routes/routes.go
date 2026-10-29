@@ -21,6 +21,7 @@ func SetupRoutes(
 	pythonServiceURL string,
 	internalJWTSecret string,
 	enableDocs bool,
+	loadUser middleware.UserLoader,
 ) {
 	// Global Middlewares
 	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
@@ -57,7 +58,7 @@ func SetupRoutes(
 
 		// Protected routes (any authenticated user)
 		protected := api.Group("")
-		protected.Use(middleware.AuthMiddleware(jwtSecret))
+		protected.Use(middleware.AuthMiddleware(jwtSecret, loadUser))
 		{
 			// User
 			protected.GET("/me", authHandler.Me)
@@ -94,7 +95,7 @@ func SetupRoutes(
 
 		// Admin-only routes
 		admin := api.Group("/admin")
-		admin.Use(middleware.AuthMiddleware(jwtSecret))
+		admin.Use(middleware.AuthMiddleware(jwtSecret, loadUser))
 		admin.Use(middleware.RequireRole(models.RoleAdmin))
 		{
 			admin.POST("/register", authHandler.RegisterAdmin)
