@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,7 @@ type Config struct {
 	DBUser       string
 	DBPassword   string
 	DBName       string
+	DBSSLMode    string
 	JWTSecret      string
 	JWTExpiryHrs   int
 	Port           string
@@ -31,6 +33,9 @@ type Config struct {
 	// TrustedIPHeader, if set, is a platform header that always carries the real client IP.
 	TrustedIPHeader string
 }
+
+// sslModes are the libpq sslmode values accepted in DB_SSLMODE.
+var sslModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
 
 // minJWTSecretLen is the minimum length accepted for JWT signing secrets.
 const minJWTSecretLen = 32
@@ -62,6 +67,13 @@ func Load() (*Config, error) {
 		problems = append(problems, "INTERNAL_JWT_SECRET must be different from JWT_SECRET")
 	}
 	pythonServiceURL := requireEnv("PYTHON_SERVICE_URL", &problems)
+	dbSSLMode := strings.TrimSpace(os.Getenv("DB_SSLMODE"))
+	if dbSSLMode == "" {
+		dbSSLMode = "require"
+	}
+	if !slices.Contains(sslModes, dbSSLMode) {
+		problems = append(problems, "DB_SSLMODE must be one of: "+strings.Join(sslModes, ", "))
+	}
 	trustedProxies := splitList(os.Getenv("TRUSTED_PROXIES"))
 	for _, p := range trustedProxies {
 		if !validProxy(p) {
@@ -78,6 +90,7 @@ func Load() (*Config, error) {
 		DBUser:       getEnv("DB_USER", "postgres"),
 		DBPassword:   dbPassword,
 		DBName:         getEnv("DB_NAME", "discipline"),
+		DBSSLMode:      dbSSLMode,
 		JWTSecret:      jwtSecret,
 		JWTExpiryHrs:   jwtExpiry,
 		Port:           getEnv("PORT", "8080"),

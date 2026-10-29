@@ -10,14 +10,17 @@ import (
 	"discipline-backend/internal/models"
 )
 
+// postgresDSN builds the connection string; sslmode comes from DB_SSLMODE (default require).
+func postgresDSN(cfg *Config) string {
+	return fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBSSLMode,
+	)
+}
+
 // ConnectDB opens a GORM connection to PostgreSQL and auto-migrates models.
 func ConnectDB(cfg *Config) *gorm.DB {
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName,
-	)
-
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(postgresDSN(cfg)), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}

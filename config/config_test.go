@@ -146,3 +146,41 @@ func TestLoad_RejectsInvalidTrustedProxy(t *testing.T) {
 		t.Fatal("expected an error for an invalid TRUSTED_PROXIES entry")
 	}
 }
+
+func TestLoad_DBSSLModeDefaultsToRequire(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("DB_SSLMODE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DBSSLMode != "require" {
+		t.Fatalf("expected default sslmode require, got %q", cfg.DBSSLMode)
+	}
+	if !strings.Contains(postgresDSN(cfg), "sslmode=require") {
+		t.Fatal("DSN must use sslmode=require by default")
+	}
+	if strings.Contains(postgresDSN(cfg), "sslmode=disable") {
+		t.Fatal("DSN must not hardcode sslmode=disable")
+	}
+}
+
+func TestLoad_DBSSLModeFromEnv(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("DB_SSLMODE", "verify-full")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(postgresDSN(cfg), "sslmode=verify-full") {
+		t.Fatalf("DSN must use DB_SSLMODE, got sslmode=%s", cfg.DBSSLMode)
+	}
+}
+
+func TestLoad_RejectsInvalidDBSSLMode(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("DB_SSLMODE", "maybe")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DB_SSLMODE") {
+		t.Fatalf("expected a DB_SSLMODE error, got %v", err)
+	}
+}
