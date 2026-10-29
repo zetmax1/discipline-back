@@ -1,8 +1,13 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"gorm.io/gorm"
 )
 
 const testJWTSecret = "0123456789abcdef0123456789abcdef" // 32 chars
@@ -182,5 +187,58 @@ func TestLoad_RejectsInvalidDBSSLMode(t *testing.T) {
 	t.Setenv("DB_SSLMODE", "maybe")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DB_SSLMODE") {
 		t.Fatalf("expected a DB_SSLMODE error, got %v", err)
+	}
+}
+
+func TestLoad_AppEnvAndDocsFlags(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("APP_ENV", "")
+	t.Setenv("ENABLE_DOCS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.GinMode() != "release" {
+		t.Fatalf("default gin mode must be release, got %s", cfg.GinMode())
+	}
+	if cfg.EnableDocs {
+		t.Fatal("docs must be disabled by default")
+	}
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("ENABLE_DOCS", "true")
+	cfg, _ = Load()
+	if cfg.GinMode() != "debug" {
+		t.Fatalf("APP_ENV=development must use debug mode, got %s", cfg.GinMode())
+	}
+	if !cfg.EnableDocs {
+		t.Fatal("ENABLE_DOCS=true must enable docs")
+	}
+
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("ENABLE_DOCS", "1")
+	cfg, _ = Load()
+	if cfg.GinMode() != "release" || cfg.EnableDocs {
+		t.Fatal("only APP_ENV=development and ENABLE_DOCS=true change the defaults")
+	}
+}
+
+func TestGormLogger_WarnLevelAndQuiet(t *testing.T) {
+	var buf bytes.Buffer
+	l := newGormLogger(&buf)
+	ctx := context.Background()
+
+	l.Info(ctx, "info message %s", "x")
+	l.Trace(ctx, time.Now(), func() (string, int64) {
+		return `SELECT * FROM "users" WHERE email = 'person@example.com'`, 0
+	}, gorm.ErrRecordNotFound)
+	l.Trace(ctx, time.Now(), func() (string, int64) { return "SELECT 1", 1 }, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("info, fast queries and record-not-found must not be logged, got %q", buf.String())
+	}
+
+	l.Warn(ctx, "warn message")
+	if !strings.Contains(buf.String(), "warn message") {
+		t.Fatal("warnings must still be logged")
 	}
 }

@@ -60,18 +60,21 @@ func main() {
 	vocabService := services.NewVocabService(vocabRepo)
 	vocabHandler := handlers.NewVocabHandler(vocabService)
 
-	// Setup Gin router
+	// Setup Gin router (release mode unless APP_ENV=development)
+	gin.SetMode(cfg.GinMode())
 	r := gin.Default()
 	if err := middleware.ConfigureClientIP(r, cfg.TrustedProxies, cfg.TrustedIPHeader); err != nil {
 		log.Fatalf("Invalid trusted proxy configuration: %v", err)
 	}
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret)
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
-	log.Printf("Swagger UI: http://localhost:%s/swagger/index.html", cfg.Port)
+	if cfg.EnableDocs {
+		log.Printf("Swagger UI: http://localhost:%s/swagger/index.html", cfg.Port)
+	}
 	if err := newHTTPServer(":"+cfg.Port, r).ListenAndServe(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}

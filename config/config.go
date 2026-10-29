@@ -32,6 +32,18 @@ type Config struct {
 	TrustedProxies []string
 	// TrustedIPHeader, if set, is a platform header that always carries the real client IP.
 	TrustedIPHeader string
+	// AppEnv is "development" for local work; anything else runs Gin in release mode.
+	AppEnv string
+	// EnableDocs serves Swagger UI when ENABLE_DOCS=true.
+	EnableDocs bool
+}
+
+// GinMode returns gin's debug mode only when APP_ENV=development.
+func (c *Config) GinMode() string {
+	if c.AppEnv == "development" {
+		return "debug"
+	}
+	return "release"
 }
 
 // sslModes are the libpq sslmode values accepted in DB_SSLMODE.
@@ -99,6 +111,8 @@ func Load() (*Config, error) {
 		PythonServiceURL:  pythonServiceURL,
 		TrustedProxies:    trustedProxies,
 		TrustedIPHeader:   strings.TrimSpace(os.Getenv("TRUSTED_IP_HEADER")),
+		AppEnv:            strings.TrimSpace(os.Getenv("APP_ENV")),
+		EnableDocs:        strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_DOCS")), "true"),
 	}, nil
 }
 

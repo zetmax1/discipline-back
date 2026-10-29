@@ -20,6 +20,7 @@ func SetupRoutes(
 	allowedOrigins string,
 	pythonServiceURL string,
 	internalJWTSecret string,
+	enableDocs bool,
 ) {
 	// Global Middlewares
 	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
@@ -34,8 +35,10 @@ func SetupRoutes(
 		c.JSON(405, gin.H{"error": "method not allowed"})
 	})
 
-	// Swagger UI
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Swagger UI (only when ENABLE_DOCS=true)
+	if enableDocs {
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	// Health check
 	r.GET("/ping", func(c *gin.Context) {
