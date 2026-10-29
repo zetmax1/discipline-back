@@ -61,7 +61,7 @@ func main() {
 	r := gin.Default()
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.AnalyticsAPIKey)
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

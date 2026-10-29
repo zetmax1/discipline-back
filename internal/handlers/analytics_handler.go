@@ -11,29 +11,46 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
+	"github.com/golang-jwt/jwt/v5"
+)
+
+// Internal token settings shared with the Python service.
+const (
+	internalTokenAudience = "discipline-py"
+	internalTokenTTL      = 60 * time.Second
 )
 
 // AnalyticsHandler proxies requests to the Python Analytics Microservice.
 type AnalyticsHandler struct {
 	pythonServiceURL string
-	apiKey           string
+	internalSecret   []byte
 }
 
-// NewAnalyticsHandler creates a new AnalyticsHandler.
-func NewAnalyticsHandler(pythonServiceURL, apiKey string) *AnalyticsHandler {
-	// Default to local service if not provided
-	if pythonServiceURL == "" {
-		pythonServiceURL = "https://discipline-py.up.railway.app"
-	}
+// NewAnalyticsHandler creates a new AnalyticsHandler. internalSecret signs the
+// per-request token that tells the Python service which user the request is for.
+func NewAnalyticsHandler(pythonServiceURL, internalSecret string) *AnalyticsHandler {
 	// Remove trailing slashes to avoid double-slash URLs (e.g. //analytics/weekly)
 	pythonServiceURL = strings.TrimRight(pythonServiceURL, "/")
 	return &AnalyticsHandler{
 		pythonServiceURL: pythonServiceURL,
-		apiKey:           apiKey,
+		internalSecret:   []byte(internalSecret),
 	}
+}
+
+// internalToken signs a short-lived HS256 token identifying the user to the Python service.
+func (h *AnalyticsHandler) internalToken(userID uint) (string, error) {
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		Subject:   strconv.FormatUint(uint64(userID), 10),
+		Audience:  jwt.ClaimStrings{internalTokenAudience},
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(internalTokenTTL)),
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.internalSecret)
 }
 
 const (
@@ -93,11 +110,21 @@ func decodeSmartSchedule(body io.Reader) (*SmartScheduleRequest, error) {
 
 // upstreamURL builds a Python service URL from a fixed path and server-built query values.
 func (h *AnalyticsHandler) upstreamURL(path string, query url.Values) string {
+	if len(query) == 0 {
+		return h.pythonServiceURL + path
+	}
 	return h.pythonServiceURL + path + "?" + query.Encode()
 }
 
-// forward sends the request to the Python service and relays its JSON response.
+// forward sends the request to the Python service on behalf of the authenticated
+// user and relays its JSON response.
 func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body []byte) {
+	token, err := h.internalToken(c.MustGet("userID").(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
+		return
+	}
+
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -107,8 +134,7 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
 		return
 	}
-	// Attach security key
-	req.Header.Add("X-API-Key", h.apiKey)
+	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Add("Content-Type", "application/json")
 	}
@@ -154,8 +180,6 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 // @Failure      500    {object}  ErrorResponse
 // @Router       /analytics [get]
 func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
-	userID := c.MustGet("userID").(uint)
-
 	var pythonRoute string
 	switch c.DefaultQuery("range", "week") {
 	case "week":
@@ -167,15 +191,11 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 		return
 	}
 
-	query := url.Values{}
-	query.Set("user_id", strconv.FormatUint(uint64(userID), 10))
-	h.forward(c, http.MethodGet, h.upstreamURL(pythonRoute, query), nil)
+	h.forward(c, http.MethodGet, h.upstreamURL(pythonRoute, nil), nil)
 }
 
 // GetFocusPatterns proxies the focus-patterns endpoint
 func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
-	userID := c.MustGet("userID").(uint)
-
 	days := defaultFocusDays
 	if raw := c.Query("days"); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -189,7 +209,6 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 	}
 
 	query := url.Values{}
-	query.Set("user_id", strconv.FormatUint(uint64(userID), 10))
 	query.Set("days", strconv.Itoa(days))
 	h.forward(c, http.MethodGet, h.upstreamURL("/analytics/focus-patterns", query), nil)
 }
@@ -207,8 +226,6 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 // @Failure      500   {object}  ErrorResponse
 // @Router       /analytics/smart-schedule [post]
 func (h *AnalyticsHandler) GenerateSmartSchedule(c *gin.Context) {
-	userID := c.MustGet("userID").(uint)
-
 	req, err := decodeSmartSchedule(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -225,7 +242,5 @@ func (h *AnalyticsHandler) GenerateSmartSchedule(c *gin.Context) {
 		return
 	}
 
-	query := url.Values{}
-	query.Set("user_id", strconv.FormatUint(uint64(userID), 10))
-	h.forward(c, http.MethodPost, h.upstreamURL("/analytics/smart-schedule", query), body)
+	h.forward(c, http.MethodPost, h.upstreamURL("/analytics/smart-schedule", nil), body)
 }

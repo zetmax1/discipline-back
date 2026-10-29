@@ -9,9 +9,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
+
+const testInternalSecret = "internal-secret-for-tests-0123456789"
 
 // upstreamRecorder is a fake Python analytics service that records what Gin forwards.
 type upstreamRecorder struct {
@@ -52,7 +56,33 @@ func analyticsRouter(h *AnalyticsHandler) *gin.Engine {
 
 func newTestAnalyticsHandler(t *testing.T, upstreamURL string) *AnalyticsHandler {
 	t.Helper()
-	return NewAnalyticsHandler(upstreamURL, "test-api-key")
+	return NewAnalyticsHandler(upstreamURL, testInternalSecret)
+}
+
+// assertForwardedUser checks that the upstream request identifies the user only
+// through a valid internal JWT and carries no user_id query parameter.
+func assertForwardedUser(t *testing.T, up *upstreamRecorder, wantSub string) {
+	t.Helper()
+	if got, ok := up.lastURL.Query()["user_id"]; ok {
+		t.Fatalf("upstream must not receive a user_id query param, got %v", got)
+	}
+	raw, ok := strings.CutPrefix(up.lastAuth, "Bearer ")
+	if !ok {
+		t.Fatalf("upstream request must carry a Bearer token, got %q", up.lastAuth)
+	}
+	claims := &jwt.RegisteredClaims{}
+	_, err := jwt.ParseWithClaims(raw, claims, func(tok *jwt.Token) (interface{}, error) {
+		return []byte(testInternalSecret), nil
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithAudience("discipline-py"), jwt.WithExpirationRequired())
+	if err != nil {
+		t.Fatalf("internal token invalid: %v", err)
+	}
+	if claims.Subject != wantSub {
+		t.Fatalf("internal token sub must be %q, got %q", wantSub, claims.Subject)
+	}
+	if ttl := time.Until(claims.ExpiresAt.Time); ttl <= 0 || ttl > 60*time.Second {
+		t.Fatalf("internal token must expire within 60s, ttl=%v", ttl)
+	}
 }
 
 func doRequest(r http.Handler, method, target, body string) *httptest.ResponseRecorder {
@@ -119,10 +149,8 @@ func TestFocusPatterns_ForwardsOnlyValidatedParams(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	assertForwardedUser(t, up, "1")
 	q := up.lastURL.Query()
-	if got := q["user_id"]; len(got) != 1 || got[0] != "1" {
-		t.Fatalf("upstream user_id must be exactly the authenticated user [1], got %v", got)
-	}
 	if got := q["days"]; len(got) != 1 || got[0] != "14" {
 		t.Fatalf("upstream days must be [14], got %v", got)
 	}
@@ -161,9 +189,7 @@ func TestGetAnalytics_RangeValidation(t *testing.T) {
 			if up.lastURL.Path != tc.wantPath {
 				t.Fatalf("expected upstream path %s, got %s", tc.wantPath, up.lastURL.Path)
 			}
-			if got := up.lastURL.Query()["user_id"]; len(got) != 1 || got[0] != "1" {
-				t.Fatalf("upstream user_id must be [1], got %v", got)
-			}
+			assertForwardedUser(t, up, "1")
 		})
 	}
 }
@@ -185,9 +211,7 @@ func TestSmartSchedule_ValidBodyIsReencoded(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := up.lastURL.Query()["user_id"]; len(got) != 1 || got[0] != "1" {
-		t.Fatalf("upstream user_id must be [1], got %v", got)
-	}
+	assertForwardedUser(t, up, "1")
 	var fwd map[string]json.RawMessage
 	if err := json.Unmarshal(up.lastBody, &fwd); err != nil {
 		t.Fatalf("forwarded body is not JSON: %v", err)

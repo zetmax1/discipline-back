@@ -12,7 +12,8 @@ func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("JWT_SECRET", testJWTSecret)
 	t.Setenv("DB_PASSWORD", "db-password-for-tests")
-	t.Setenv("ANALYTICS_API_KEY", "analytics-key-for-tests")
+	t.Setenv("INTERNAL_JWT_SECRET", "fedcba9876543210fedcba9876543210")
+	t.Setenv("PYTHON_SERVICE_URL", "http://discipline-py.railway.internal:8082")
 }
 
 func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
@@ -27,7 +28,7 @@ func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
 }
 
 func TestLoad_FailsWhenSecretMissing(t *testing.T) {
-	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD"} {
+	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD", "INTERNAL_JWT_SECRET", "PYTHON_SERVICE_URL"} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)
 			t.Setenv(name, "")
@@ -52,6 +53,22 @@ func TestLoad_FailsWhenJWTSecretTooShort(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), short) {
 		t.Fatal("error message must not contain the secret value")
+	}
+}
+
+func TestLoad_FailsWhenInternalJWTSecretTooShort(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("INTERNAL_JWT_SECRET", strings.Repeat("y", 31))
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "INTERNAL_JWT_SECRET") {
+		t.Fatalf("expected an INTERNAL_JWT_SECRET length error, got %v", err)
+	}
+}
+
+func TestLoad_FailsWhenInternalSecretEqualsJWTSecret(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("INTERNAL_JWT_SECRET", testJWTSecret)
+	if _, err := Load(); err == nil {
+		t.Fatal("INTERNAL_JWT_SECRET must be distinct from JWT_SECRET")
 	}
 }
 

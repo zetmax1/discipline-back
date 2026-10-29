@@ -22,7 +22,9 @@ type Config struct {
 	JWTExpiryHrs   int
 	Port           string
 	AllowedOrigins string
-	AnalyticsAPIKey string
+	// InternalJWTSecret signs the short-lived tokens Gin sends to the Python service.
+	InternalJWTSecret string
+	PythonServiceURL  string
 }
 
 // minJWTSecretLen is the minimum length accepted for JWT signing secrets.
@@ -47,7 +49,14 @@ func Load() (*Config, error) {
 		problems = append(problems, fmt.Sprintf("JWT_SECRET must be at least %d characters", minJWTSecretLen))
 	}
 	dbPassword := requireEnv("DB_PASSWORD", &problems)
-	analyticsAPIKey := requireEnv("ANALYTICS_API_KEY", &problems)
+	internalJWTSecret := requireEnv("INTERNAL_JWT_SECRET", &problems)
+	if internalJWTSecret != "" && len(internalJWTSecret) < minJWTSecretLen {
+		problems = append(problems, fmt.Sprintf("INTERNAL_JWT_SECRET must be at least %d characters", minJWTSecretLen))
+	}
+	if internalJWTSecret != "" && internalJWTSecret == jwtSecret {
+		problems = append(problems, "INTERNAL_JWT_SECRET must be different from JWT_SECRET")
+	}
+	pythonServiceURL := requireEnv("PYTHON_SERVICE_URL", &problems)
 	if len(problems) > 0 {
 		return nil, errors.New("invalid configuration: " + strings.Join(problems, "; "))
 	}
@@ -62,7 +71,8 @@ func Load() (*Config, error) {
 		JWTExpiryHrs:   jwtExpiry,
 		Port:           getEnv("PORT", "8080"),
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:5173,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
-		AnalyticsAPIKey: analyticsAPIKey,
+		InternalJWTSecret: internalJWTSecret,
+		PythonServiceURL:  pythonServiceURL,
 	}, nil
 }
 

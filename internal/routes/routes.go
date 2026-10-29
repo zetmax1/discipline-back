@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"os"
-
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -20,7 +18,8 @@ func SetupRoutes(
 	vocabHandler *handlers.VocabHandler,
 	jwtSecret string,
 	allowedOrigins string,
-	analyticsAPIKey string,
+	pythonServiceURL string,
+	internalJWTSecret string,
 ) {
 	// Global Middlewares
 	r.Use(middleware.SecurityHeaders())
@@ -74,11 +73,7 @@ func SetupRoutes(
 			analytics := protected.Group("/analytics")
 			analytics.Use(middleware.AnalyticsRateLimiter())
 			{
-				pythonURL := os.Getenv("PYTHON_SERVICE_URL")
-				if pythonURL == "" {
-					pythonURL = "https://discipline-py.up.railway.app/"
-				}
-				analyticsHandler := handlers.NewAnalyticsHandler(pythonURL, analyticsAPIKey)
+				analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
 				analytics.GET("", analyticsHandler.GetAnalytics)
 				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)
 				analytics.POST("/smart-schedule", analyticsHandler.GenerateSmartSchedule)
