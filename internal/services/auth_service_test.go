@@ -157,3 +157,19 @@ func TestDummyHashUsesDefaultCost(t *testing.T) {
 		t.Fatalf("dummy hash must use the same cost as real hashes, got %d (%v)", cost, err)
 	}
 }
+
+func TestUpdateProfile_EmailChangeNeedsCorrectPassword(t *testing.T) {
+	svc, _ := newTestAuthService()
+	u, _, _ := svc.Register("Ann", "ann@example.com", "long-enough-pw")
+
+	if _, err := svc.UpdateProfile(u.ID, "", "new@example.com", "", ""); err == nil {
+		t.Fatal("email change without current password must fail")
+	}
+	if _, err := svc.UpdateProfile(u.ID, "", "new@example.com", "wrong-password", ""); err == nil {
+		t.Fatal("email change with wrong password must fail")
+	}
+	updated, err := svc.UpdateProfile(u.ID, "", "new@example.com", "long-enough-pw", "")
+	if err != nil || updated.Email != "new@example.com" {
+		t.Fatalf("expected email change, got %v %+v", err, updated)
+	}
+}

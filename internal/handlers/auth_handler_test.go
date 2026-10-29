@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -134,5 +135,57 @@ func TestUpdateProfile_WeakNewPasswordIs400(t *testing.T) {
 	w := doRequest(r, http.MethodPut, "/me", `{"oldPassword":"1234567890","newPassword":"short"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func registerAnn(t *testing.T, r *gin.Engine) {
+	t.Helper()
+	w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("setup register failed: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdateProfile_EmailChangeRequiresCurrentPassword(t *testing.T) {
+	r := realAuthRouter(t)
+	registerAnn(t, r)
+
+	if w := doRequest(r, http.MethodPut, "/me", `{"email":"new@example.com"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("email change without password must be 400, got %d", w.Code)
+	}
+	if w := doRequest(r, http.MethodPut, "/me", `{"email":"new@example.com","oldPassword":"wrong-password"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("email change with wrong password must be 400, got %d", w.Code)
+	}
+	w := doRequest(r, http.MethodPut, "/me", `{"email":"new@example.com","oldPassword":"1234567890"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "new@example.com") {
+		t.Fatalf("email change with correct password must succeed, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdateProfile_RejectsInvalidEmail(t *testing.T) {
+	r := realAuthRouter(t)
+	registerAnn(t, r)
+	w := doRequest(r, http.MethodPut, "/me", `{"email":"x","oldPassword":"1234567890"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid email must be 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateProfile_NameLength(t *testing.T) {
+	r := realAuthRouter(t)
+	registerAnn(t, r)
+	if w := doRequest(r, http.MethodPut, "/me", `{"name":"`+strings.Repeat("a", 101)+`"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("101-char name must be 400, got %d", w.Code)
+	}
+	if w := doRequest(r, http.MethodPut, "/me", `{"name":"`+strings.Repeat("a", 100)+`"}`); w.Code != http.StatusOK {
+		t.Fatalf("100-char name must be accepted, got %d", w.Code)
+	}
+}
+
+func TestUpdateProfile_NameOnlyNeedsNoPassword(t *testing.T) {
+	r := realAuthRouter(t)
+	registerAnn(t, r)
+	if w := doRequest(r, http.MethodPut, "/me", `{"name":"Annie"}`); w.Code != http.StatusOK {
+		t.Fatalf("name-only change must not require a password, got %d", w.Code)
 	}
 }

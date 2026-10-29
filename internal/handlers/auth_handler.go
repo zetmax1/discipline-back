@@ -228,15 +228,15 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 
 // UpdateProfileRequest is the expected JSON body for profile updates.
 type UpdateProfileRequest struct {
-	Name        string `json:"name,omitempty" example:"Jane Doe"`
-	Email       string `json:"email,omitempty" example:"jane@example.com"`
-	OldPassword string `json:"oldPassword,omitempty" example:"oldpass123"`
+	Name        string `json:"name,omitempty" binding:"omitempty,max=100" example:"Jane Doe"`
+	Email       string `json:"email,omitempty" binding:"omitempty,email" example:"jane@example.com"`
+	OldPassword string `json:"oldPassword,omitempty" example:"oldpass123"` // required to change email or password
 	NewPassword string `json:"newPassword,omitempty" example:"newpass456"`
 }
 
 // UpdateProfile godoc
 // @Summary      Update user profile
-// @Description  Updates the authenticated user's name, email, and/or password
+// @Description  Updates the authenticated user's name, email, and/or password. Changing email or password requires oldPassword.
 // @Tags         Auth
 // @Accept       json
 // @Produce      json

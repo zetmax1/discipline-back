@@ -158,16 +158,38 @@ func (s *authService) GetUserByID(id uint) (*models.User, error) {
 }
 
 // UpdateProfile updates user name, email, and optionally password.
+// Changing the email or password requires the correct current password.
 func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPassword string) (*models.User, error) {
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
 		return nil, errors.New("user not found")
 	}
 
+	changingEmail := email != "" && email != user.Email
+	changingPassword := newPassword != ""
+
+	// Changing the login email or password requires the current password.
+	if changingEmail || changingPassword {
+		if oldPassword == "" {
+			if changingEmail {
+				return nil, errors.New("current password is required to change email")
+			}
+			return nil, errors.New("current password is required to set a new password")
+		}
+		if changingPassword {
+			if err := ValidatePassword(newPassword); err != nil {
+				return nil, err
+			}
+		}
+		if err := compareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
+			return nil, errors.New("current password is incorrect")
+		}
+	}
+
 	if name != "" {
 		user.Name = name
 	}
-	if email != "" && email != user.Email {
+	if changingEmail {
 		existing, _ := s.userRepo.FindByEmail(email)
 		if existing != nil && existing.ID != id {
 			return nil, errors.New("email already in use")
@@ -175,16 +197,7 @@ func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPasswo
 		user.Email = email
 	}
 
-	if newPassword != "" {
-		if oldPassword == "" {
-			return nil, errors.New("current password is required to set a new password")
-		}
-		if err := ValidatePassword(newPassword); err != nil {
-			return nil, err
-		}
-		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
-			return nil, errors.New("current password is incorrect")
-		}
+	if changingPassword {
 		hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 		if err != nil {
 			return nil, errors.New("failed to hash password")
