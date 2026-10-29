@@ -26,6 +26,8 @@ type TaskRepository interface {
 	FindByUserAndDate(userID uint, date string) ([]models.Task, error)
 	// UpdateTask applies a validated partial update, writing only the changed columns.
 	UpdateTask(id, userID uint, merge TaskMerge) (*models.Task, error)
+	// AdjustDistractions atomically adds delta to the counter, clamped to 0-100.
+	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
 	Delete(id, userID uint) error
 }
 
@@ -158,6 +160,20 @@ func (r *taskRepository) UpdateTask(id, userID uint, merge TaskMerge) (*models.T
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (r *taskRepository) AdjustDistractions(id, userID uint, delta int) (*models.Task, error) {
+	var task models.Task
+	res := r.db.Model(&task).Clauses(clause.Returning{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("distractions", gorm.Expr("LEAST(100, GREATEST(0, distractions + ?))", delta))
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &task, nil
 }
 
 func (r *taskRepository) Delete(id, userID uint) error {

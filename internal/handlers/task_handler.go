@@ -249,6 +249,44 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	})
 }
 
+// AdjustDistractionsRequest changes a block's distraction count by one.
+type AdjustDistractionsRequest struct {
+	Delta *int `json:"delta" binding:"required" example:"1"` // 1 or -1
+}
+
+// AdjustDistractions godoc
+// @Summary      Increment or decrement distractions
+// @Description  Atomically adds delta (1 or -1) to a block's distraction count, clamped to 0-100
+// @Tags         Tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path  int                        true  "Task ID"
+// @Param        body  body  AdjustDistractionsRequest  true  "Delta"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  ErrorResponse
+// @Failure      404   {object}  ErrorResponse
+// @Router       /tasks/{id}/distractions [post]
+func (h *TaskHandler) AdjustDistractions(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	taskID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+	var req AdjustDistractionsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Validation failed", "details": err.Error()})
+		return
+	}
+	task, err := h.taskService.AdjustDistractions(uint(taskID), userID, *req.Delta)
+	if err != nil {
+		respondTaskError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"task": task})
+}
+
 // DeleteTask godoc
 // @Summary      Delete a task
 // @Description  Deletes a task by ID

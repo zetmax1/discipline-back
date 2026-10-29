@@ -27,6 +27,7 @@ type TaskService interface {
 	GetTask(id, userID uint) (*models.Task, error)
 	GetTasks(userID uint, date string) ([]models.Task, error)
 	UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task, error)
+	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
 	DeleteTask(id, userID uint) error
 	GetDashboardStats(userID uint, date string) (*DashboardStats, error)
 }
@@ -77,6 +78,14 @@ func (s *taskService) UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task,
 	return s.taskRepo.UpdateTask(id, userID, func(current models.Task) (map[string]any, models.Task, bool, error) {
 		return mergeTaskUpdate(current, upd)
 	})
+}
+
+// AdjustDistractions adds +1 or -1 to a block's distraction count in one SQL statement.
+func (s *taskService) AdjustDistractions(id, userID uint, delta int) (*models.Task, error) {
+	if delta != 1 && delta != -1 {
+		return nil, invalidTask("delta must be 1 or -1")
+	}
+	return s.taskRepo.AdjustDistractions(id, userID, delta)
 }
 
 func (s *taskService) DeleteTask(id, userID uint) error {

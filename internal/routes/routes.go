@@ -69,6 +69,7 @@ func SetupRoutes(
 			protected.POST("/tasks/bulk", taskHandler.BulkCreateTasks)
 			protected.GET("/tasks", taskHandler.GetTasks)
 			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
+			protected.POST("/tasks/:id/distractions", taskHandler.AdjustDistractions)
 			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
 
 			// Dashboard
