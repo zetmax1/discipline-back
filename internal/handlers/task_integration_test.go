@@ -70,6 +70,7 @@ func newTaskEnv(t *testing.T) *taskEnv {
 	r.POST("/tasks/bulk", h.BulkCreateTasks)
 	r.PUT("/tasks/:id", h.UpdateTask)
 	r.POST("/tasks/:id/distractions", h.AdjustDistractions)
+	r.PUT("/tasks/plan", h.SavePlan)
 	env.r = r
 	return env
 }

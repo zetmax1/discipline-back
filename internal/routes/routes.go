@@ -80,6 +80,7 @@ func SetupRoutes(
 			// Tasks
 			protected.POST("/tasks", taskHandler.CreateTask)
 			protected.POST("/tasks/bulk", taskHandler.BulkCreateTasks)
+			protected.PUT("/tasks/plan", taskHandler.SavePlan)
 			protected.GET("/tasks", taskHandler.GetTasks)
 			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
 			protected.POST("/tasks/:id/distractions", taskHandler.AdjustDistractions)

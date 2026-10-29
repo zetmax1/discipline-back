@@ -1,7 +1,9 @@
 package services
 
 import (
+	"crypto/rand"
 	"fmt"
+	"time"
 
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
@@ -15,6 +17,7 @@ type TaskService interface {
 	GetTasks(userID uint, date string) ([]models.Task, error)
 	UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task, error)
 	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
+	SaveWeekPlan(userID uint, weekStart string, tasks []*models.Task) (planID string, replaced int64, err error)
 	DeleteTask(id, userID uint) error
 }
 
@@ -64,6 +67,47 @@ func (s *taskService) UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task,
 	return s.taskRepo.UpdateTask(id, userID, func(current models.Task) (map[string]any, models.Task, bool, error) {
 		return mergeTaskUpdate(current, upd)
 	})
+}
+
+// SaveWeekPlan stores a generated weekly plan for the Monday-Sunday week starting at
+// weekStart, replacing blocks generated for that week before (manual blocks are kept).
+func (s *taskService) SaveWeekPlan(userID uint, weekStart string, tasks []*models.Task) (string, int64, error) {
+	start, err := time.Parse("2006-01-02", weekStart)
+	if err != nil || start.Format("2006-01-02") != weekStart || start.Weekday() != time.Monday {
+		return "", 0, invalidTask("weekStart must be a Monday (YYYY-MM-DD)")
+	}
+	end := start.AddDate(0, 0, 6).Format("2006-01-02")
+	planID, err := newUUID()
+	if err != nil {
+		return "", 0, err
+	}
+	for i, t := range tasks {
+		if err := validateNewTask(t); err != nil {
+			return "", 0, fmt.Errorf("tasks[%d]: %w", i, err)
+		}
+		if string(t.Date) < weekStart || string(t.Date) > end {
+			return "", 0, invalidTask("tasks[%d]: date must be within %s..%s", i, weekStart, end)
+		}
+		t.UserID = userID
+		t.Source = models.SourceSmartSchedule
+		t.PlanID = &planID
+	}
+	replaced, err := s.taskRepo.ReplaceWeekPlan(userID, models.Date(weekStart), models.Date(end), tasks)
+	if err != nil {
+		return "", 0, err
+	}
+	return planID, replaced, nil
+}
+
+// newUUID returns a random (version 4) UUID.
+func newUUID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
 // AdjustDistractions adds +1 or -1 to a block's distraction count in one SQL statement.

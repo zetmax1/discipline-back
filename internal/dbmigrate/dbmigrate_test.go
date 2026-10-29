@@ -363,3 +363,25 @@ func TestTokenVersionColumn(t *testing.T) {
 		t.Fatalf("existing users must start at token_version 0 (NOT NULL), got %d nullable=%s", v, nullable)
 	}
 }
+
+func TestTaskSourceAndPlanColumns(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 5); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	mustExec(t, db, `INSERT INTO tasks (user_id, name, category, start_time, end_time, date) VALUES (1, 'old', 'study', '09:00', '10:00', '2026-10-29')`)
+	if err := dbmigrate.UpTo(ctx, db, 6); err != nil {
+		t.Fatalf("source/plan_id migration: %v", err)
+	}
+	var source string
+	var planNull bool
+	mustScan(t, db, `SELECT source, plan_id IS NULL FROM tasks`, &source, &planNull)
+	if source != "manual" || !planNull {
+		t.Fatalf("existing tasks must become manual with no plan, got %q plan_null=%v", source, planNull)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET source = 'imported'`); err == nil {
+		t.Fatal("source must be limited to manual / smart-schedule")
+	}
+}

@@ -26,6 +26,9 @@ type TaskRepository interface {
 	FindByUserAndDate(userID uint, date string) ([]models.Task, error)
 	// UpdateTask applies a validated partial update, writing only the changed columns.
 	UpdateTask(id, userID uint, merge TaskMerge) (*models.Task, error)
+	// ReplaceWeekPlan deletes the user's generated blocks dated weekStart..weekEnd and
+	// inserts tasks, all in one transaction; returns how many blocks were replaced.
+	ReplaceWeekPlan(userID uint, weekStart, weekEnd models.Date, tasks []*models.Task) (int64, error)
 	// AdjustDistractions atomically adds delta to the counter, clamped to 0-100.
 	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
 	Delete(id, userID uint) error
@@ -103,6 +106,37 @@ func (r *taskRepository) CreateTasks(userID uint, tasks []*models.Task) error {
 		}
 		return tx.CreateInBatches(tasks, 100).Error
 	})
+}
+
+func (r *taskRepository) ReplaceWeekPlan(userID uint, weekStart, weekEnd models.Date, tasks []*models.Task) (int64, error) {
+	if err := checkBatchOverlaps(tasks); err != nil {
+		return 0, err
+	}
+	var replaced int64
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockUserTasks(tx, userID); err != nil {
+			return err
+		}
+		res := tx.Where("user_id = ? AND source = ? AND date BETWEEN ? AND ?",
+			userID, models.SourceSmartSchedule, weekStart, weekEnd).Delete(&models.Task{})
+		if res.Error != nil {
+			return res.Error
+		}
+		replaced = res.RowsAffected
+		for _, t := range tasks {
+			if err := checkOverlap(tx, userID, t.Date, t.StartTime, t.EndTime, 0); err != nil {
+				return err
+			}
+		}
+		if len(tasks) == 0 {
+			return nil
+		}
+		return tx.CreateInBatches(tasks, 100).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return replaced, nil
 }
 
 func (r *taskRepository) FindByID(id, userID uint) (*models.Task, error) {

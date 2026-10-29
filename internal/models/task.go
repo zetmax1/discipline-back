@@ -18,6 +18,12 @@ const (
 	StatusSkipped   = "skipped"
 )
 
+// Source constants: who created a block.
+const (
+	SourceManual        = "manual"
+	SourceSmartSchedule = "smart-schedule"
+)
+
 // Task represents a scheduled time block.
 type Task struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
@@ -30,6 +36,8 @@ type Task struct {
 	Distractions int       `gorm:"not null;default:0" json:"distractions"`
 	Energy       int       `gorm:"not null;default:3" json:"energy"`
 	Date         Date      `gorm:"type:date;not null" json:"date"`
+	Source       string    `gorm:"not null;default:manual" json:"source"` // manual | smart-schedule
+	PlanID       *string   `gorm:"type:uuid" json:"planId,omitempty"`     // set for smart-schedule blocks
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

@@ -112,3 +112,13 @@ func TestTokenRejectedAfterPasswordChange(t *testing.T) {
 		t.Fatalf("a name change must not revoke the session, got %d", w.Code)
 	}
 }
+
+func TestPlanRouteIsNotShadowedByTaskID(t *testing.T) {
+	r := newAppRouter(t)
+	token := tokenFrom(t, call(r, http.MethodPost, "/api/auth/register", "", `{"name":"Ann","email":"ann@example.com","password":"long-enough-pw"}`))
+	w := call(r, http.MethodPut, "/api/tasks/plan", token,
+		`{"weekStart":"2026-11-02","tasks":[{"name":"Deep Work","category":"deep-work","startTime":"09:00","endTime":"10:00","energy":3,"date":"2026-11-02"}]}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"planId"`) {
+		t.Fatalf("PUT /api/tasks/plan must reach SavePlan, got %d %s", w.Code, w.Body.String())
+	}
+}

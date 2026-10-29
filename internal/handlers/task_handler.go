@@ -249,6 +249,51 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	})
 }
 
+// SavePlanRequest is a generated weekly plan for the Monday-Sunday week starting at WeekStart.
+type SavePlanRequest struct {
+	WeekStart string              `json:"weekStart" binding:"required" example:"2026-11-02"` // a Monday
+	Tasks     []CreateTaskRequest `json:"tasks" binding:"max=200,dive"`
+}
+
+// SavePlan godoc
+// @Summary      Save a generated weekly plan
+// @Description  Replaces the blocks previously generated for that week (manual blocks are kept) in one transaction.
+// @Tags         Tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body  SavePlanRequest  true  "Week and blocks"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  ErrorResponse
+// @Failure      409   {object}  ErrorResponse
+// @Router       /tasks/plan [put]
+func (h *TaskHandler) SavePlan(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	var req SavePlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Validation failed", "details": err.Error()})
+		return
+	}
+	tasks := make([]*models.Task, 0, len(req.Tasks))
+	for _, tr := range req.Tasks {
+		tasks = append(tasks, &models.Task{
+			Name:      tr.Name,
+			Category:  tr.Category,
+			StartTime: models.ClockTime(tr.StartTime),
+			EndTime:   models.ClockTime(tr.EndTime),
+			Energy:    tr.Energy,
+			Date:      models.Date(tr.Date),
+			Status:    models.StatusPending,
+		})
+	}
+	planID, replaced, err := h.taskService.SaveWeekPlan(userID, req.WeekStart, tasks)
+	if err != nil {
+		respondTaskError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"planId": planID, "count": len(tasks), "replaced": replaced})
+}
+
 // AdjustDistractionsRequest changes a block's distraction count by one.
 type AdjustDistractionsRequest struct {
 	Delta *int `json:"delta" binding:"required" example:"1"` // 1 or -1
