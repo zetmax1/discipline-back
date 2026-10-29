@@ -58,12 +58,13 @@ func lockUserTasks(tx *gorm.DB, userID uint) error {
 }
 
 // checkOverlap reports ErrTaskOverlap if [start, end) intersects another of the user's
-// blocks on date (excluding excludeID). Touching blocks do not overlap.
+// blocks on date (excluding excludeID). Touching blocks do not overlap, and skipped
+// blocks do not occupy time.
 func checkOverlap(tx *gorm.DB, userID uint, date models.Date, start, end models.ClockTime, excludeID uint) error {
 	var ids []uint
 	err := tx.Raw(`SELECT id FROM tasks
-		WHERE user_id = ? AND date = ? AND id <> ? AND start_time < ? AND end_time > ?
-		LIMIT 1`, userID, date, excludeID, end, start).Scan(&ids).Error
+		WHERE user_id = ? AND date = ? AND id <> ? AND status <> ? AND start_time < ? AND end_time > ?
+		LIMIT 1`, userID, date, excludeID, models.StatusSkipped, end, start).Scan(&ids).Error
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,9 @@ func (r *taskRepository) UpdateTask(id, userID uint, merge TaskMerge) (*models.T
 		if err != nil {
 			return err
 		}
-		if timesMoved {
+		// A skipped block occupies no time; un-skipping one claims its slot again.
+		unskipped := current.Status == models.StatusSkipped && merged.Status != models.StatusSkipped
+		if merged.Status != models.StatusSkipped && (timesMoved || unskipped) {
 			if err := checkOverlap(tx, userID, merged.Date, merged.StartTime, merged.EndTime, id); err != nil {
 				return err
 			}

@@ -266,3 +266,38 @@ func TestBulkCreate_ValidatesEveryItemAndOverlaps(t *testing.T) {
 		t.Fatalf("a rejected batch must insert nothing, found %d", n)
 	}
 }
+
+func TestOverlap_SkippedBlocksDoNotOccupyTime(t *testing.T) {
+	e := newTaskEnv(t)
+	put := func(id uint, body string) int {
+		return doRequest(e.r, http.MethodPut, fmt.Sprintf("/tasks/%d", id), body).Code
+	}
+	_, a := e.create(t, taskJSON("A", "09:00", "10:00", "2026-10-29"))
+	if c := put(a, `{"status":"skipped"}`); c != http.StatusOK {
+		t.Fatalf("skip A: %d", c)
+	}
+	code, b := e.create(t, taskJSON("B", "09:30", "10:30", "2026-10-29"))
+	if code != http.StatusCreated {
+		t.Fatalf("a skipped block must not block a new one, got %d", code)
+	}
+	if c := put(a, `{"startTime":"09:15","endTime":"10:15"}`); c != http.StatusOK {
+		t.Fatalf("moving a skipped block over B must be allowed, got %d", c)
+	}
+	if c := put(a, `{"status":"pending"}`); c != http.StatusConflict {
+		t.Fatalf("un-skipping A while it overlaps B must be 409, got %d", c)
+	}
+	var stored models.Task
+	e.db.First(&stored, a)
+	if stored.Status != models.StatusSkipped {
+		t.Fatalf("a rejected un-skip must leave A skipped, got %q", stored.Status)
+	}
+	if c := put(b, `{"status":"skipped"}`); c != http.StatusOK {
+		t.Fatalf("skip B: %d", c)
+	}
+	if c := put(a, `{"status":"completed"}`); c != http.StatusOK {
+		t.Fatalf("un-skipping A once B is skipped must succeed, got %d", c)
+	}
+	if code, _ := e.create(t, taskJSON("C", "09:45", "10:30", "2026-10-29")); code != http.StatusConflict {
+		t.Fatalf("A is no longer skipped, so C must conflict with it, got %d", code)
+	}
+}

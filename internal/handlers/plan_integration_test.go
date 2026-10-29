@@ -120,3 +120,14 @@ func TestSavePlan_RejectsBadInput(t *testing.T) {
 		t.Fatalf("rejected saves must insert nothing, found %d", len(got))
 	}
 }
+
+func TestSavePlan_SkippedManualBlockDoesNotBlockThePlan(t *testing.T) {
+	e := newTaskEnv(t)
+	_, manual := e.create(t, taskJSON("Manual", "09:00", "10:00", "2026-11-02"))
+	if c := doRequest(e.r, http.MethodPut, fmt.Sprintf("/tasks/%d", manual), `{"status":"skipped"}`).Code; c != http.StatusOK {
+		t.Fatalf("skip: %d", c)
+	}
+	if code, _ := e.savePlan(t, planBody(planWeek, taskJSON("Plan", "09:30", "10:30", "2026-11-02"))); code != http.StatusOK {
+		t.Fatalf("a skipped manual block must not block the plan, got %d", code)
+	}
+}
