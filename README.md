@@ -69,11 +69,11 @@ Once the server is running, you can access the API endpoints. By default, the se
 - `/api/v1/auth/register` - User registration
 - Other endpoints as configured in `internal/routes/routes.go`
 
-Swagger documentation is available at `/swagger/index.html` when the server is running.
+Swagger documentation is available at `/swagger/index.html` when the server runs with `ENABLE_DOCS=true`.
 
 ## API Documentation
 
-The API is documented using Swagger. After starting the server, visit `http://localhost:8080/swagger/index.html` to view the interactive API documentation.
+The API is documented using Swagger. Start the server with `ENABLE_DOCS=true`, then visit `http://localhost:8080/swagger/index.html` to view the interactive API documentation.
 
 ## Project Structure
 
@@ -112,29 +112,17 @@ discipline-back/
 
 ## Environment Variables
 
-Create a `.env` file in the root directory with the following variables:
+Create a `.env` file in the root directory (it is git-ignored).
 
-```env
-# Server configuration
-PORT=8080
-ENVIRONMENT=development
+See `.env.example` for every variable (names only). Required, with no defaults —
+the server refuses to start without them:
 
-# Database configuration
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-DB_NAME=your_database_name
-DB_SSL_MODE=disable
+- `JWT_SECRET` (at least 32 characters)
+- `INTERNAL_JWT_SECRET` (at least 32 characters, different from `JWT_SECRET`, same value on the analytics service)
+- `DB_PASSWORD`
+- `PYTHON_SERVICE_URL`
 
-# JWT configuration
-JWT_SECRET=your_jwt_secret_key
-JWT_EXPIRY_HOURS=24
-
-# Other configurations
-APP_NAME=DisciplineBackend
-LOG_LEVEL=info
-```
+For local development also set `APP_ENV=development` and, if your local Postgres has no TLS, `DB_SSLMODE=disable`.
 
 ## Contributing
 
