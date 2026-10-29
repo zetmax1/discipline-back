@@ -29,7 +29,7 @@ func NewAuthHandler(authService services.AuthService, loginThrottle *services.Lo
 type RegisterRequest struct {
 	Name     string `json:"name" binding:"required,min=2,max=100" example:"John Doe"`
 	Email    string `json:"email" binding:"required,email" example:"john@example.com"`
-	Password string `json:"password" binding:"required,min=6" example:"securepass123"`
+	Password string `json:"password" binding:"required" example:"securepass123"` // policy: 10+ chars, max 72 bytes
 }
 
 // LoginRequest is the expected JSON body for login.
@@ -54,6 +54,19 @@ type ErrorResponse struct {
 // UserResponse wraps user info for the /me endpoint.
 type UserResponse struct {
 	User *models.User `json:"user"`
+}
+
+// respondRegisterError maps registration errors: policy violations are 400,
+// an existing email stays 409, anything else is 500.
+func respondRegisterError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, services.ErrPasswordPolicy):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, services.ErrEmailTaken):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Registration failed"})
+	}
 }
 
 // --- Handlers ---
@@ -81,9 +94,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	user, token, err := h.authService.Register(req.Name, req.Email, req.Password)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"error": err.Error(),
-		})
+		respondRegisterError(c, err)
 		return
 	}
 
@@ -204,9 +215,7 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 
 	user, token, err := h.authService.RegisterAdmin(req.Name, req.Email, req.Password)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"error": err.Error(),
-		})
+		respondRegisterError(c, err)
 		return
 	}
 

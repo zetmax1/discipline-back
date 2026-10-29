@@ -1,8 +1,11 @@
 package services
 
 import (
+	"crypto/rand"
 	"errors"
+	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -13,6 +16,46 @@ import (
 
 // ErrInvalidCredentials is returned by Login for an unknown email or wrong password.
 var ErrInvalidCredentials = errors.New("invalid email or password")
+
+// ErrEmailTaken is returned when registering with an email that already exists.
+var ErrEmailTaken = errors.New("user with this email already exists")
+
+// ErrPasswordPolicy is wrapped by every password policy violation.
+var ErrPasswordPolicy = errors.New("password does not meet policy")
+
+// Password policy: bcrypt only uses the first 72 bytes, so longer passwords are rejected.
+const (
+	minPasswordChars = 10
+	maxPasswordBytes = 72
+)
+
+// ValidatePassword enforces the password policy for registration and password changes.
+func ValidatePassword(password string) error {
+	if utf8.RuneCountInString(password) < minPasswordChars {
+		return fmt.Errorf("%w: password must be at least %d characters", ErrPasswordPolicy, minPasswordChars)
+	}
+	if len(password) > maxPasswordBytes {
+		return fmt.Errorf("%w: password must be at most %d bytes", ErrPasswordPolicy, maxPasswordBytes)
+	}
+	return nil
+}
+
+// compareHashAndPassword is a variable so tests can observe calls.
+var compareHashAndPassword = bcrypt.CompareHashAndPassword
+
+// dummyPasswordHash is compared against when the email is unknown, so a login
+// for a missing account costs the same bcrypt work as one for a real account.
+var dummyPasswordHash = func() []byte {
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		panic(err)
+	}
+	hash, err := bcrypt.GenerateFromPassword(random, bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return hash
+}()
 
 // AuthService defines authentication business logic.
 type AuthService interface {
@@ -50,10 +93,14 @@ func (s *authService) RegisterAdmin(name, email, password string) (*models.User,
 
 // registerWithRole is the shared registration logic.
 func (s *authService) registerWithRole(name, email, password, role string) (*models.User, string, error) {
+	if err := ValidatePassword(password); err != nil {
+		return nil, "", err
+	}
+
 	// Check if user already exists
 	existing, _ := s.userRepo.FindByEmail(email)
 	if existing != nil {
-		return nil, "", errors.New("user with this email already exists")
+		return nil, "", ErrEmailTaken
 	}
 
 	// Hash password
@@ -86,11 +133,13 @@ func (s *authService) registerWithRole(name, email, password, role string) (*mod
 func (s *authService) Login(email, password string) (*models.User, string, error) {
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
+		// Same bcrypt cost as a real account, so response time doesn't reveal unknown emails.
+		_ = compareHashAndPassword(dummyPasswordHash, []byte(password))
 		return nil, "", ErrInvalidCredentials
 	}
 
 	// Compare password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+	if err := compareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return nil, "", ErrInvalidCredentials
 	}
 
@@ -129,6 +178,9 @@ func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPasswo
 	if newPassword != "" {
 		if oldPassword == "" {
 			return nil, errors.New("current password is required to set a new password")
+		}
+		if err := ValidatePassword(newPassword); err != nil {
+			return nil, err
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
 			return nil, errors.New("current password is incorrect")

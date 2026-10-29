@@ -106,3 +106,33 @@ func TestLogin_SuccessResetsFailures(t *testing.T) {
 		t.Fatalf("counter should have been reset by the earlier success, got %d", w.Code)
 	}
 }
+
+func realAuthRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	return authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef", 1), services.NewLoginThrottle(100)))
+}
+
+func TestRegister_WeakPasswordIs400AndDuplicateIs409(t *testing.T) {
+	r := realAuthRouter(t)
+	w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"123456789"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("weak password must be 400, got %d: %s", w.Code, w.Body.String())
+	}
+	w = doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	w = doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("duplicate email must stay 409, got %d", w.Code)
+	}
+}
+
+func TestUpdateProfile_WeakNewPasswordIs400(t *testing.T) {
+	r := realAuthRouter(t)
+	doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	w := doRequest(r, http.MethodPut, "/me", `{"oldPassword":"1234567890","newPassword":"short"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
