@@ -26,7 +26,10 @@ import (
 
 func main() {
 	// Load configuration
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Startup aborted: %v", err)
+	}
 
 	// Connect to database
 	db := config.ConnectDB(cfg)
