@@ -215,7 +215,7 @@ func (s *vocabService) fetchDailyWords(userID uint, date string) (words, unsaved
 			Example:      enDef.Example,
 			Synonym:      enDef.Synonym,
 			PartOfSpeech: enDef.PartOfSpeech,
-			Date:         date,
+			Date:         models.Date(date),
 		})
 	} else {
 		// English fallback: never persisted
@@ -224,7 +224,7 @@ func (s *vocabService) fetchDailyWords(userID uint, date string) (words, unsaved
 			Word:       enWord,
 			Language:   "english",
 			Definition: "An advanced English vocabulary word",
-			Date:       date,
+			Date:       models.Date(date),
 		})
 	}
 
@@ -237,7 +237,7 @@ func (s *vocabService) fetchDailyWords(userID uint, date string) (words, unsaved
 		Definition:   ruEntry.Definition,
 		Example:      ruEntry.Example,
 		PartOfSpeech: ruEntry.PartOfSpeech,
-		Date:         date,
+		Date:         models.Date(date),
 	})
 
 	return words, unsaved

@@ -385,3 +385,69 @@ func TestTaskSourceAndPlanColumns(t *testing.T) {
 		t.Fatal("source must be limited to manual / smart-schedule")
 	}
 }
+
+func TestVocabularyDateColumnConvertsAndReverts(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 6); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	mustExec(t, db, `INSERT INTO vocabulary_words (user_id, word, language, definition, date) VALUES (1, 'w', 'english', 'd', '2026-10-29')`)
+
+	if err := dbmigrate.UpTo(ctx, db, 7); err != nil {
+		t.Fatalf("vocabulary date migration: %v", err)
+	}
+	var date, dateType string
+	mustScan(t, db, `SELECT date::text, pg_typeof(date)::text FROM vocabulary_words`, &date, &dateType)
+	if date != "2026-10-29" || dateType != "date" {
+		t.Fatalf("expected DATE 2026-10-29, got %s (%s)", date, dateType)
+	}
+	if _, err := db.Exec(`INSERT INTO vocabulary_words (user_id, word, language, definition, date) VALUES (1, 'dup', 'english', 'd', '2026-10-29')`); err == nil {
+		t.Fatal("the (user_id, date, language) unique index must survive the type change")
+	}
+
+	if err := dbmigrate.DownTo(ctx, db, 6); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	mustScan(t, db, `SELECT date, pg_typeof(date)::text FROM vocabulary_words`, &date, &dateType)
+	if date != "2026-10-29" || dateType != "text" {
+		t.Fatalf("down must restore the text column, got %s (%s)", date, dateType)
+	}
+}
+
+func TestVocabularyDateMigrationAbortsAndListsBadRows(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 6); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	mustExec(t, db, `INSERT INTO vocabulary_words (id, user_id, word, language, definition, date) VALUES
+		(10, 1, 'ok',  'english', 'd', '2026-10-29'),
+		(11, 1, 'bad', 'english', 'd', '2026-02-30'),
+		(12, 1, 'us',  'russian', 'd', '10/29/2026')`)
+
+	err := dbmigrate.UpTo(ctx, db, 7)
+	if err == nil {
+		t.Fatal("migration must abort when a date cannot be converted")
+	}
+	msg := err.Error()
+	for _, want := range []string{"vocabulary_words.id=11", "2026-02-30", "vocabulary_words.id=12", "10/29/2026"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error must list %q; got:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "vocabulary_words.id=10 ") {
+		t.Errorf("valid row 10 must not be listed:\n%s", msg)
+	}
+	if v := version(t, db); v != 6 {
+		t.Fatalf("aborted migration must leave version at 6, got %d", v)
+	}
+	var n int
+	var dateType string
+	mustScan(t, db, `SELECT count(*), min(pg_typeof(date)::text) FROM vocabulary_words`, &n, &dateType)
+	if n != 3 || dateType != "text" {
+		t.Fatalf("aborted migration must not change data: rows=%d type=%s", n, dateType)
+	}
+}

@@ -71,3 +71,11 @@ func TestClockTimeMinutes(t *testing.T) {
 		t.Fatal("9am must not parse")
 	}
 }
+
+func TestVocabularyWordDateUsesTheDateType(t *testing.T) {
+	// The column is DATE; pgx scans it as time.Time, which only models.Date accepts.
+	var w VocabularyWord
+	if err := (&w.Date).Scan(time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)); err != nil || w.Date != "2026-10-29" {
+		t.Fatalf("got %q, %v", w.Date, err)
+	}
+}
