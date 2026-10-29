@@ -2,8 +2,8 @@ package config
 
 import (
 	"bytes"
-	"database/sql"
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"

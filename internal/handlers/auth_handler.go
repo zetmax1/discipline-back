@@ -230,7 +230,7 @@ func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 type UpdateProfileRequest struct {
 	Name        string `json:"name,omitempty" binding:"omitempty,max=100" example:"Jane Doe"`
 	Email       string `json:"email,omitempty" binding:"omitempty,email" example:"jane@example.com"`
-	OldPassword string `json:"oldPassword,omitempty" example:"oldpass123"` // required to change email or password
+	OldPassword string `json:"oldPassword,omitempty" example:"oldpass123"`                            // required to change email or password
 	Timezone    string `json:"timezone,omitempty" binding:"omitempty,max=64" example:"Asia/Tashkent"` // IANA name
 	NewPassword string `json:"newPassword,omitempty" example:"newpass456"`
 }

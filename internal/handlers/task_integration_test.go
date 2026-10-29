@@ -25,9 +25,9 @@ type sqlRecorder struct {
 	stmt []string
 }
 
-func (r *sqlRecorder) LogMode(logger.LogLevel) logger.Interface    { return r }
-func (r *sqlRecorder) Info(context.Context, string, ...interface{}) {}
-func (r *sqlRecorder) Warn(context.Context, string, ...interface{}) {}
+func (r *sqlRecorder) LogMode(logger.LogLevel) logger.Interface      { return r }
+func (r *sqlRecorder) Info(context.Context, string, ...interface{})  {}
+func (r *sqlRecorder) Warn(context.Context, string, ...interface{})  {}
 func (r *sqlRecorder) Error(context.Context, string, ...interface{}) {}
 func (r *sqlRecorder) Trace(_ context.Context, _ time.Time, fc func() (string, int64), _ error) {
 	s, _ := fc()

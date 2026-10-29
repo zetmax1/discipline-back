@@ -18,7 +18,9 @@ func newTestRouter(enableDocs bool) *gin.Engine {
 	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
 		"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 		"internal-secret-for-tests-0123456789", enableDocs,
-		func(uint) (*middleware.AuthUser, error) { return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil })
+		func(uint) (*middleware.AuthUser, error) {
+			return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil
+		})
 	return r
 }
 
