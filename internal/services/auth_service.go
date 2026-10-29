@@ -11,6 +11,9 @@ import (
 	"discipline-backend/internal/repositories"
 )
 
+// ErrInvalidCredentials is returned by Login for an unknown email or wrong password.
+var ErrInvalidCredentials = errors.New("invalid email or password")
+
 // AuthService defines authentication business logic.
 type AuthService interface {
 	Register(name, email, password string) (*models.User, string, error)
@@ -83,12 +86,12 @@ func (s *authService) registerWithRole(name, email, password, role string) (*mod
 func (s *authService) Login(email, password string) (*models.User, string, error) {
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
-		return nil, "", errors.New("invalid email or password")
+		return nil, "", ErrInvalidCredentials
 	}
 
 	// Compare password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return nil, "", errors.New("invalid email or password")
+		return nil, "", ErrInvalidCredentials
 	}
 
 	// Generate JWT

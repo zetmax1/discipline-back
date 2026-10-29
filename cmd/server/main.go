@@ -8,6 +8,7 @@ import (
 	"discipline-backend/config"
 	_ "discipline-backend/docs" // Swagger generated docs
 	"discipline-backend/internal/handlers"
+	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/routes"
 	"discipline-backend/internal/services"
@@ -42,7 +43,7 @@ func main() {
 	// Auth
 	userRepo := repositories.NewUserRepository(db)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTExpiryHrs)
-	authHandler := handlers.NewAuthHandler(authService)
+	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(100000))
 
 	// Tasks
 	taskRepo := repositories.NewTaskRepository(db)
@@ -59,6 +60,9 @@ func main() {
 
 	// Setup Gin router
 	r := gin.Default()
+	if err := middleware.ConfigureClientIP(r, cfg.TrustedProxies, cfg.TrustedIPHeader); err != nil {
+		log.Fatalf("Invalid trusted proxy configuration: %v", err)
+	}
 
 	// Register all routes
 	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret)

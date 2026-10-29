@@ -110,3 +110,39 @@ func TestAdminSeedCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_TrustedProxies(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("TRUSTED_PROXIES", " 10.0.0.0/8, 192.168.1.1 ,")
+	t.Setenv("TRUSTED_IP_HEADER", "X-Real-IP")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[0] != "10.0.0.0/8" || cfg.TrustedProxies[1] != "192.168.1.1" {
+		t.Fatalf("unexpected proxies %v", cfg.TrustedProxies)
+	}
+	if cfg.TrustedIPHeader != "X-Real-IP" {
+		t.Fatalf("unexpected header %q", cfg.TrustedIPHeader)
+	}
+}
+
+func TestLoad_TrustedProxiesDefaultToNone(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("TRUSTED_PROXIES", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.TrustedProxies) != 0 {
+		t.Fatalf("expected no trusted proxies, got %v", cfg.TrustedProxies)
+	}
+}
+
+func TestLoad_RejectsInvalidTrustedProxy(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8,nope")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for an invalid TRUSTED_PROXIES entry")
+	}
+}

@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"errors"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,12 +14,13 @@ import (
 
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
-	authService services.AuthService
+	authService   services.AuthService
+	loginThrottle *services.LoginThrottle
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(authService services.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService services.AuthService, loginThrottle *services.LoginThrottle) *AuthHandler {
+	return &AuthHandler{authService: authService, loginThrottle: loginThrottle}
 }
 
 // --- Request / Response types ---
@@ -100,6 +104,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 // @Success      200   {object}  AuthResponse
 // @Failure      400   {object}  ErrorResponse
 // @Failure      401   {object}  ErrorResponse
+// @Failure      429   {object}  ErrorResponse
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -111,13 +116,29 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	user, token, err := h.authService.Login(req.Email, req.Password)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": err.Error(),
+	if locked, retryAfter := h.loginThrottle.Locked(req.Email); locked {
+		c.Header("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": "Too many failed login attempts. Please try again later.",
 		})
 		return
 	}
+
+	user, token, err := h.authService.Login(req.Email, req.Password)
+	if err != nil {
+		if errors.Is(err, services.ErrInvalidCredentials) {
+			h.loginThrottle.RecordFailure(req.Email)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Login failed",
+		})
+		return
+	}
+	h.loginThrottle.Reset(req.Email)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Login successful",
