@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -82,30 +81,31 @@ const (
 )
 
 // SmartScheduleCommitment is a fixed commitment sent to the schedule generator.
+// Gin only enforces structure and size here; the analytics service validates the
+// values (time format, end != start, day names) and answers 422, which is relayed.
 type SmartScheduleCommitment struct {
-	ID        string   `json:"id" binding:"required,max=64"`
-	Name      string   `json:"name" binding:"required,min=1,max=100"`
-	StartTime string   `json:"startTime" binding:"required"`
-	EndTime   string   `json:"endTime" binding:"required"`
-	Days      []string `json:"days" binding:"required,min=1,max=7,dive,oneof=Monday Tuesday Wednesday Thursday Friday Saturday Sunday"`
+	ID        string   `json:"id" binding:"max=64"`
+	Name      string   `json:"name" binding:"max=100"`
+	StartTime string   `json:"startTime" binding:"max=5"`
+	EndTime   string   `json:"endTime" binding:"max=5"`
+	Days      []string `json:"days" binding:"max=7,dive,max=9"`
 }
 
-// SmartScheduleGoals are weekly goal hours; omitted fields fall back to the generator's defaults.
+// SmartScheduleGoals are weekly goal hours (range/step rules are enforced by the analytics service).
 type SmartScheduleGoals struct {
-	DeepWorkHours *float64 `json:"deepWorkHours,omitempty" binding:"omitempty,min=0,max=168"`
-	StudyHours    *float64 `json:"studyHours,omitempty" binding:"omitempty,min=0,max=168"`
-	RestHours     *float64 `json:"restHours,omitempty" binding:"omitempty,min=0,max=168"`
+	DeepWorkHours *float64 `json:"deepWorkHours,omitempty"`
+	StudyHours    *float64 `json:"studyHours,omitempty"`
+	RestHours     *float64 `json:"restHours,omitempty"`
 }
 
 // SmartScheduleRequest is the only body shape forwarded to the Python service.
 type SmartScheduleRequest struct {
 	Commitments []SmartScheduleCommitment `json:"commitments" binding:"max=50,dive"`
-	Goals       *SmartScheduleGoals       `json:"goals" binding:"required"`
+	Goals       *SmartScheduleGoals       `json:"goals"`
 }
 
-var hhmm = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
-
-// decodeSmartSchedule strictly decodes and validates the request body.
+// decodeSmartSchedule strictly decodes the body (unknown fields, wrong types and
+// trailing data are rejected) and enforces size limits before it is re-encoded.
 func decodeSmartSchedule(body io.Reader) (*SmartScheduleRequest, error) {
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
@@ -119,15 +119,24 @@ func decodeSmartSchedule(body io.Reader) (*SmartScheduleRequest, error) {
 	if err := binding.Validator.ValidateStruct(&req); err != nil {
 		return nil, err
 	}
-	for i, c := range req.Commitments {
-		if !hhmm.MatchString(c.StartTime) || !hhmm.MatchString(c.EndTime) {
-			return nil, fmt.Errorf("commitments[%d]: times must be HH:MM between 00:00 and 23:59", i)
-		}
-	}
 	if req.Commitments == nil {
 		req.Commitments = []SmartScheduleCommitment{}
 	}
 	return &req, nil
+}
+
+// relayValidationError passes the analytics service's 422 {error, details} to the client.
+func relayValidationError(c *gin.Context, body io.Reader, limit int64) {
+	var payload struct {
+		Error   string            `json:"error"`
+		Details []json.RawMessage `json:"details"`
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, limit))
+	if err != nil || json.Unmarshal(raw, &payload) != nil || payload.Error == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Analytics service returned an invalid validation error"})
+		return
+	}
+	c.JSON(http.StatusUnprocessableEntity, gin.H{"error": payload.Error, "details": payload.Details})
 }
 
 // upstreamURL builds a Python service URL from a fixed path and server-built query values.
@@ -168,6 +177,10 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		relayValidationError(c, resp.Body, h.maxResponseBytes)
+		return
+	}
 	if resp.StatusCode != http.StatusOK {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analytics service returned an error"})
 		return
