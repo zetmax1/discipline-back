@@ -312,30 +312,3 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
 }
-
-// GetDashboardStats godoc
-// @Summary      Get dashboard statistics
-// @Description  Returns computed stats for a given date (completion, focus score, hours)
-// @Tags         Dashboard
-// @Produce      json
-// @Security     BearerAuth
-// @Param        date  query  string  false  "Date (YYYY-MM-DD), defaults to today"  example(2026-03-02)
-// @Success      200   {object}  services.DashboardStats
-// @Failure      500   {object}  ErrorResponse
-// @Router       /dashboard/stats [get]
-func (h *TaskHandler) GetDashboardStats(c *gin.Context) {
-	userID := c.MustGet("userID").(uint)
-	date := c.Query("date")
-
-	if date == "" {
-		date = userToday(c)
-	}
-
-	stats, err := h.taskService.GetDashboardStats(userID, date)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to compute stats"})
-		return
-	}
-
-	c.JSON(http.StatusOK, stats)
-}

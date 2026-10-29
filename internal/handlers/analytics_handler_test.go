@@ -348,3 +348,21 @@ func doRequestWithHeader(r http.Handler, method, target, body, key, value string
 	r.ServeHTTP(w, req)
 	return w
 }
+
+func TestDashboardToday_ProxiesToPythonTodayWithUserToken(t *testing.T) {
+	up := &upstreamRecorder{}
+	srv := up.server(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("userID", uint(1)); c.Set("userTimezone", "Asia/Tashkent") })
+	r.GET("/dashboard/today", NewAnalyticsHandler(srv.URL, testInternalSecret).GetToday)
+
+	w := doRequest(r, http.MethodGet, "/dashboard/today?user_id=2&date=2026-01-01", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if up.lastURL.Path != "/analytics/today" || up.lastURL.RawQuery != "" {
+		t.Fatalf("must call /analytics/today with no client params, got %s?%s", up.lastURL.Path, up.lastURL.RawQuery)
+	}
+	assertForwardedUser(t, up, "1")
+}

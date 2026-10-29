@@ -85,14 +85,15 @@ func SetupRoutes(
 			protected.POST("/tasks/:id/distractions", taskHandler.AdjustDistractions)
 			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
 
-			// Dashboard
-			protected.GET("/dashboard/stats", taskHandler.GetDashboardStats)
+			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
+
+			// Dashboard: today's metrics come from the analytics service's single metrics module
+			protected.GET("/dashboard/today", analyticsHandler.GetToday)
 
 			// Analytics (proxied to Python service with strict rate limiting)
 			analytics := protected.Group("/analytics")
 			analytics.Use(middleware.AnalyticsRateLimiter())
 			{
-				analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
 				analytics.GET("", analyticsHandler.GetAnalytics)
 				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)
 				analytics.POST("/smart-schedule", analyticsHandler.GenerateSmartSchedule)

@@ -219,6 +219,19 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	h.forward(c, http.MethodGet, h.upstreamURL(pythonRoute, nil), nil)
 }
 
+// GetToday godoc
+// @Summary      Today's dashboard metrics
+// @Description  Planned/done minutes and focus-score components for today in the user's time zone, computed by the analytics service.
+// @Tags         Dashboard
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]interface{}
+// @Failure      502  {object}  ErrorResponse
+// @Router       /dashboard/today [get]
+func (h *AnalyticsHandler) GetToday(c *gin.Context) {
+	h.forward(c, http.MethodGet, h.upstreamURL("/analytics/today", nil), nil)
+}
+
 // GetFocusPatterns proxies the focus-patterns endpoint
 func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 	days := defaultFocusDays

@@ -70,3 +70,18 @@ func TestRouter_RejectsUnknownCORSOrigin(t *testing.T) {
 		t.Fatalf("allowed origin preflight should succeed, got %d", w.Code)
 	}
 }
+
+func TestDashboardRoutes(t *testing.T) {
+	r := newTestRouter(false)
+	// The old Go-computed stats endpoint is gone; today's metrics come from Python.
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/dashboard/stats", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("/api/dashboard/stats must be removed, got %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/dashboard/today", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("/api/dashboard/today must exist behind auth, got %d", w.Code)
+	}
+}

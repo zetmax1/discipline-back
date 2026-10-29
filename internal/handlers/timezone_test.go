@@ -43,10 +43,6 @@ func (f *dateCapturingTaskService) GetTasks(userID uint, date string) ([]models.
 	f.date = date
 	return nil, nil
 }
-func (f *dateCapturingTaskService) GetDashboardStats(userID uint, date string) (*services.DashboardStats, error) {
-	f.date = date
-	return &services.DashboardStats{}, nil
-}
 
 type dateCapturingVocabService struct {
 	services.VocabService
@@ -81,16 +77,11 @@ func TestDefaultDates_UseUserTimezone(t *testing.T) {
 		r := tzRouter(tc.tz, func(r *gin.Engine) {
 			th := NewTaskHandler(tasks)
 			r.GET("/tasks", th.GetTasks)
-			r.GET("/stats", th.GetDashboardStats)
 			r.GET("/vocab", NewVocabHandler(vocab).GetTodayWords)
 		})
 		doRequest(r, http.MethodGet, "/tasks", "")
 		if tasks.date != tc.want {
 			t.Errorf("%s: GET /tasks default date = %s, want %s", tc.tz, tasks.date, tc.want)
-		}
-		doRequest(r, http.MethodGet, "/stats", "")
-		if tasks.date != tc.want {
-			t.Errorf("%s: GET /dashboard/stats default date = %s, want %s", tc.tz, tasks.date, tc.want)
 		}
 		doRequest(r, http.MethodGet, "/vocab", "")
 		if vocab.date != tc.want {
