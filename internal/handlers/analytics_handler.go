@@ -24,10 +24,21 @@ const (
 	internalTokenTTL      = 60 * time.Second
 )
 
+// AnalyticsClientTimeout bounds every call to the Python service.
+const AnalyticsClientTimeout = 10 * time.Second
+
+// maxAnalyticsResponseBytes caps upstream responses (they embed base64 chart images).
+const maxAnalyticsResponseBytes = 10 << 20
+
+// analyticsClient is shared by all analytics handlers so connections are reused.
+var analyticsClient = &http.Client{Timeout: AnalyticsClientTimeout}
+
 // AnalyticsHandler proxies requests to the Python Analytics Microservice.
 type AnalyticsHandler struct {
 	pythonServiceURL string
 	internalSecret   []byte
+	client           *http.Client
+	maxResponseBytes int64
 }
 
 // NewAnalyticsHandler creates a new AnalyticsHandler. internalSecret signs the
@@ -38,6 +49,8 @@ func NewAnalyticsHandler(pythonServiceURL, internalSecret string) *AnalyticsHand
 	return &AnalyticsHandler{
 		pythonServiceURL: pythonServiceURL,
 		internalSecret:   []byte(internalSecret),
+		client:           analyticsClient,
+		maxResponseBytes: maxAnalyticsResponseBytes,
 	}
 }
 
@@ -129,7 +142,7 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, endpoint, rd)
+	req, err := http.NewRequestWithContext(c.Request.Context(), method, endpoint, rd)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
 		return
@@ -139,10 +152,9 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 		req.Header.Add("Content-Type", "application/json")
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := h.client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to analytics service"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to analytics service"})
 		return
 	}
 	defer resp.Body.Close()
@@ -152,9 +164,13 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 		return
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, h.maxResponseBytes+1))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read analytics response"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to read analytics response"})
+		return
+	}
+	if int64(len(respBody)) > h.maxResponseBytes {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Analytics response too large"})
 		return
 	}
 

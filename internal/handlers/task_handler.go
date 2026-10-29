@@ -45,9 +45,9 @@ type UpdateTaskRequest struct {
 	Date         *string `json:"date,omitempty" example:"2026-03-02"`
 }
 
-// BulkCreateTasksRequest is a list of multiple CreateTaskRequest items
+// BulkCreateTasksRequest is a list of 1–200 CreateTaskRequest items
 type BulkCreateTasksRequest struct {
-	Tasks []CreateTaskRequest `json:"tasks" binding:"required,dive"`
+	Tasks []CreateTaskRequest `json:"tasks" binding:"required,min=1,max=200,dive"`
 }
 
 // TaskListResponse wraps a list of tasks.

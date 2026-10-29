@@ -2,6 +2,8 @@ package main
 
 import (
 	"log"
+	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -70,7 +72,20 @@ func main() {
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
 	log.Printf("Swagger UI: http://localhost:%s/swagger/index.html", cfg.Port)
-	if err := r.Run(":" + cfg.Port); err != nil {
+	if err := newHTTPServer(":"+cfg.Port, r).ListenAndServe(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
+	}
+}
+
+// newHTTPServer wraps the handler with read/write/idle timeouts. WriteTimeout
+// leaves room for the analytics proxy's upstream timeout.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      handlers.AnalyticsClientTimeout + 20*time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 }

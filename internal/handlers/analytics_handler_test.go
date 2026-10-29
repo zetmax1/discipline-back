@@ -270,3 +270,50 @@ func TestSmartSchedule_TooManyCommitments(t *testing.T) {
 		t.Fatalf("expected 400 for 51 commitments, got %d", w.Code)
 	}
 }
+
+func TestAnalyticsProxy_UpstreamTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+
+	h := NewAnalyticsHandler(srv.URL, testInternalSecret)
+	h.client = &http.Client{Timeout: 100 * time.Millisecond}
+	start := time.Now()
+	w := doRequest(analyticsRouter(h), http.MethodGet, "/analytics/focus-patterns", "")
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 on upstream timeout, got %d", w.Code)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("handler must not wait past the client timeout")
+	}
+}
+
+func TestAnalyticsProxy_DefaultClientHasTimeout(t *testing.T) {
+	h := NewAnalyticsHandler("http://example.invalid", testInternalSecret)
+	if h.client == nil || h.client.Timeout != 10*time.Second {
+		t.Fatalf("expected the shared client with a 10s timeout, got %+v", h.client)
+	}
+	if NewAnalyticsHandler("http://x", testInternalSecret).client != h.client {
+		t.Fatal("handlers must share one http.Client")
+	}
+}
+
+func TestAnalyticsProxy_OversizeUpstreamResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"pad":"` + strings.Repeat("a", 2048) + `"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	h := NewAnalyticsHandler(srv.URL, testInternalSecret)
+	h.maxResponseBytes = 1024
+	w := doRequest(analyticsRouter(h), http.MethodGet, "/analytics", "")
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 for an oversize upstream response, got %d", w.Code)
+	}
+}

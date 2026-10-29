@@ -2,7 +2,6 @@ package services
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -196,6 +195,12 @@ func (s *vocabService) fetchDailyWords(userID uint, date string) []models.Vocabu
 	return words
 }
 
+// dictionaryAPIBaseURL is the Free Dictionary API entry endpoint (overridden in tests).
+var dictionaryAPIBaseURL = "https://api.dictionaryapi.dev/api/v2/entries/en/"
+
+// maxDictionaryResponseBytes caps how much of a dictionary response is read.
+const maxDictionaryResponseBytes = 1 << 20
+
 type wordDefinition struct {
 	Word         string
 	Definition   string
@@ -207,7 +212,7 @@ type wordDefinition struct {
 // fetchEnglishDefinition calls the Free Dictionary API and extracts part of speech.
 func (s *vocabService) fetchEnglishDefinition(word string) *wordDefinition {
 	client := &http.Client{Timeout: 5 * time.Second}
-	url := fmt.Sprintf("https://api.dictionaryapi.dev/api/v2/entries/en/%s", word)
+	url := dictionaryAPIBaseURL + word
 
 	resp, err := client.Get(url)
 	if err != nil {
@@ -221,8 +226,12 @@ func (s *vocabService) fetchEnglishDefinition(word string) *wordDefinition {
 		return nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDictionaryResponseBytes+1))
 	if err != nil {
+		return nil
+	}
+	if len(body) > maxDictionaryResponseBytes {
+		log.Printf("Dictionary API response for %s exceeded %d bytes", word, maxDictionaryResponseBytes)
 		return nil
 	}
 

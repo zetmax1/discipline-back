@@ -9,6 +9,7 @@ import (
 // TaskRepository defines the interface for task data access.
 type TaskRepository interface {
 	Create(task *models.Task) error
+	CreateBatch(tasks []*models.Task) error
 	FindByID(id, userID uint) (*models.Task, error)
 	FindByUser(userID uint) ([]models.Task, error)
 	FindByUserAndDate(userID uint, date string) ([]models.Task, error)
@@ -27,6 +28,13 @@ func NewTaskRepository(db *gorm.DB) TaskRepository {
 
 func (r *taskRepository) Create(task *models.Task) error {
 	return r.db.Create(task).Error
+}
+
+// CreateBatch inserts all tasks in one transaction: either every task is saved or none.
+func (r *taskRepository) CreateBatch(tasks []*models.Task) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return tx.CreateInBatches(tasks, 100).Error
+	})
 }
 
 func (r *taskRepository) FindByID(id, userID uint) (*models.Task, error) {

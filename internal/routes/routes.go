@@ -22,6 +22,7 @@ func SetupRoutes(
 	internalJWTSecret string,
 ) {
 	// Global Middlewares
+	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.GlobalRateLimiter())
 	r.Use(middleware.CORSMiddleware(allowedOrigins))

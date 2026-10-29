@@ -44,13 +44,7 @@ func (s *taskService) CreateTask(task *models.Task) error {
 }
 
 func (s *taskService) BulkCreateTasks(tasks []*models.Task) error {
-	// Simple loop creation, preferably would use batch insert in GORM
-	for _, task := range tasks {
-		if err := s.taskRepo.Create(task); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.taskRepo.CreateBatch(tasks)
 }
 
 func (s *taskService) GetTask(id, userID uint) (*models.Task, error) {
