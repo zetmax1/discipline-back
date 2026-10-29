@@ -8,7 +8,19 @@ import (
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/models"
+	"discipline-backend/internal/repositories"
 )
+
+// UserLoader adapts the user repository for AuthMiddleware.
+func UserLoader(users repositories.UserRepository) middleware.UserLoader {
+	return func(id uint) (*middleware.AuthUser, error) {
+		u, err := users.FindByID(id)
+		if err != nil {
+			return nil, err
+		}
+		return &middleware.AuthUser{Role: u.Role, Timezone: u.Timezone, TokenVersion: u.TokenVersion}, nil
+	}
+}
 
 func SetupRoutes(
 	r *gin.Engine,
@@ -63,6 +75,7 @@ func SetupRoutes(
 			// User
 			protected.GET("/me", authHandler.Me)
 			protected.PUT("/me", authHandler.UpdateProfile)
+			protected.POST("/auth/logout", authHandler.Logout)
 
 			// Tasks
 			protected.POST("/tasks", taskHandler.CreateTask)

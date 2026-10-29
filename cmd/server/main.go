@@ -45,7 +45,7 @@ func main() {
 
 	// Auth
 	userRepo := repositories.NewUserRepository(db)
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTExpiryHrs)
+	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
 	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(100000))
 
 	// Tasks
@@ -69,14 +69,7 @@ func main() {
 	}
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs,
-		func(id uint) (*middleware.AuthUser, error) {
-			u, err := userRepo.FindByID(id)
-			if err != nil {
-				return nil, err
-			}
-			return &middleware.AuthUser{Role: u.Role, Timezone: u.Timezone}, nil
-		})
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo))
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

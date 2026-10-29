@@ -43,7 +43,7 @@ func authRequest(t *testing.T, load UserLoader, token string) (*httptest.Respons
 }
 
 func validClaims() jwt.MapClaims {
-	return jwt.MapClaims{"user_id": 7, "role": "admin", "exp": time.Now().Add(time.Hour).Unix()}
+	return jwt.MapClaims{"user_id": 7, "role": "admin", "tv": 0, "exp": time.Now().Add(time.Hour).Unix()}
 }
 
 func TestAuthMiddleware_LoadsTimezoneAndRoleFromDB(t *testing.T) {
@@ -76,5 +76,23 @@ func TestAuthMiddleware_LoaderFailureIs500(t *testing.T) {
 	load := func(uint) (*AuthUser, error) { return nil, errors.New("db down") }
 	if w, _ := authRequest(t, load, signedToken(t, validClaims())); w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when the user cannot be loaded, got %d", w.Code)
+	}
+}
+
+func TestAuthMiddleware_TokenVersionMustMatch(t *testing.T) {
+	load := func(uint) (*AuthUser, error) { return &AuthUser{Role: "user", Timezone: "UTC", TokenVersion: 3}, nil }
+
+	claims := validClaims()
+	claims["tv"] = 3
+	if w, _ := authRequest(t, load, signedToken(t, claims)); w.Code != http.StatusOK {
+		t.Fatalf("matching token version must pass, got %d", w.Code)
+	}
+	claims["tv"] = 2
+	if w, _ := authRequest(t, load, signedToken(t, claims)); w.Code != http.StatusUnauthorized {
+		t.Fatalf("stale token version must be 401, got %d", w.Code)
+	}
+	delete(claims, "tv")
+	if w, _ := authRequest(t, load, signedToken(t, claims)); w.Code != http.StatusUnauthorized {
+		t.Fatalf("token without a version must be 401, got %d", w.Code)
 	}
 }

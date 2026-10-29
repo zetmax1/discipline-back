@@ -258,7 +258,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.UpdateProfile(userID, req.Name, req.Email, req.OldPassword, req.NewPassword, req.Timezone)
+	user, token, err := h.authService.UpdateProfile(userID, req.Name, req.Email, req.OldPassword, req.NewPassword, req.Timezone)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -266,7 +266,26 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user": user,
-	})
+	resp := gin.H{"user": user}
+	if token != "" {
+		// The password changed: all older tokens are revoked, this one replaces them.
+		resp["token"] = token
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// Logout godoc
+// @Summary      Log out everywhere
+// @Description  Revokes every token issued to the authenticated user
+// @Tags         Auth
+// @Security     BearerAuth
+// @Success      204
+// @Failure      401  {object}  ErrorResponse
+// @Router       /auth/logout [post]
+func (h *AuthHandler) Logout(c *gin.Context) {
+	if err := h.authService.Logout(c.MustGet("userID").(uint)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Logout failed"})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

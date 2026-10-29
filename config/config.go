@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -22,7 +21,6 @@ type Config struct {
 	DBName       string
 	DBSSLMode    string
 	JWTSecret      string
-	JWTExpiryHrs   int
 	Port           string
 	AllowedOrigins string
 	// InternalJWTSecret signs the short-lived tokens Gin sends to the Python service.
@@ -58,11 +56,6 @@ func Load() (*Config, error) {
 	// Load .env file (ignore error if not present — env vars may be set directly)
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, reading from environment")
-	}
-
-	jwtExpiry, err := strconv.Atoi(getEnv("JWT_EXPIRY_HOURS", "72"))
-	if err != nil {
-		jwtExpiry = 72
 	}
 
 	var problems []string
@@ -104,7 +97,6 @@ func Load() (*Config, error) {
 		DBName:         getEnv("DB_NAME", "discipline"),
 		DBSSLMode:      dbSSLMode,
 		JWTSecret:      jwtSecret,
-		JWTExpiryHrs:   jwtExpiry,
 		Port:           getEnv("PORT", "8080"),
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:5173,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
 		InternalJWTSecret: internalJWTSecret,

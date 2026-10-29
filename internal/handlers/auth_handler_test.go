@@ -33,9 +33,10 @@ func (f *fakeAuthService) Login(email, password string) (*models.User, string, e
 func (f *fakeAuthService) GetUserByID(id uint) (*models.User, error) {
 	return &models.User{ID: id, Email: f.email}, nil
 }
-func (f *fakeAuthService) UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, error) {
-	return &models.User{ID: id, Name: name, Email: email}, nil
+func (f *fakeAuthService) UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, string, error) {
+	return &models.User{ID: id, Name: name, Email: email}, "", nil
 }
+func (f *fakeAuthService) Logout(userID uint) error { return nil }
 
 func authRouter(h *AuthHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -110,7 +111,7 @@ func TestLogin_SuccessResetsFailures(t *testing.T) {
 
 func realAuthRouter(t *testing.T) *gin.Engine {
 	t.Helper()
-	return authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef", 1), services.NewLoginThrottle(100)))
+	return authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef"), services.NewLoginThrottle(100)))
 }
 
 func TestRegister_WeakPasswordIs400AndDuplicateIs409(t *testing.T) {

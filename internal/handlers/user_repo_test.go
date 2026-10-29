@@ -39,6 +39,14 @@ func (r *handlerUserRepo) FindByID(id uint) (*models.User, error) {
 	}
 	return nil, gorm.ErrRecordNotFound
 }
+func (r *handlerUserRepo) IncrementTokenVersion(id uint) (int64, error) {
+	u, ok := r.users[id]
+	if !ok {
+		return 0, gorm.ErrRecordNotFound
+	}
+	u.TokenVersion++
+	return u.TokenVersion, nil
+}
 func (r *handlerUserRepo) Update(u *models.User) error {
 	cp := *u
 	r.users[u.ID] = &cp

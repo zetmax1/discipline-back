@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
@@ -42,6 +43,15 @@ func (r *memUserRepo) FindByID(id uint) (*models.User, error) {
 	}
 	return nil, gorm.ErrRecordNotFound
 }
+func (r *memUserRepo) IncrementTokenVersion(id uint) (int64, error) {
+	for _, u := range r.users {
+		if u.ID == id {
+			u.TokenVersion++
+			return u.TokenVersion, nil
+		}
+	}
+	return 0, gorm.ErrRecordNotFound
+}
 func (r *memUserRepo) Update(u *models.User) error {
 	for email, existing := range r.users {
 		if existing.ID == u.ID {
@@ -57,7 +67,7 @@ const testSecret = "jwt-secret-for-tests-0123456789abcdef"
 
 func newTestAuthService() (AuthService, *memUserRepo) {
 	repo := newMemUserRepo()
-	return NewAuthService(repo, testSecret, 1), repo
+	return NewAuthService(repo, testSecret), repo
 }
 
 func TestPasswordPolicy(t *testing.T) {
@@ -123,7 +133,7 @@ func TestUpdateProfile_EnforcesPasswordPolicyOnChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.UpdateProfile(u.ID, "", "", "long-enough-pw", "123456789", "")
+	_, _, err = svc.UpdateProfile(u.ID, "", "", "long-enough-pw", "123456789", "")
 	if !errors.Is(err, ErrPasswordPolicy) {
 		t.Fatalf("expected a password policy error on change, got %v", err)
 	}
@@ -162,14 +172,34 @@ func TestUpdateProfile_EmailChangeNeedsCorrectPassword(t *testing.T) {
 	svc, _ := newTestAuthService()
 	u, _, _ := svc.Register("Ann", "ann@example.com", "long-enough-pw")
 
-	if _, err := svc.UpdateProfile(u.ID, "", "new@example.com", "", "", ""); err == nil {
+	if _, _, err := svc.UpdateProfile(u.ID, "", "new@example.com", "", "", ""); err == nil {
 		t.Fatal("email change without current password must fail")
 	}
-	if _, err := svc.UpdateProfile(u.ID, "", "new@example.com", "wrong-password", "", ""); err == nil {
+	if _, _, err := svc.UpdateProfile(u.ID, "", "new@example.com", "wrong-password", "", ""); err == nil {
 		t.Fatal("email change with wrong password must fail")
 	}
-	updated, err := svc.UpdateProfile(u.ID, "", "new@example.com", "long-enough-pw", "", "")
+	updated, _, err := svc.UpdateProfile(u.ID, "", "new@example.com", "long-enough-pw", "", "")
 	if err != nil || updated.Email != "new@example.com" {
 		t.Fatalf("expected email change, got %v %+v", err, updated)
+	}
+}
+
+func TestAccessToken_Lasts24HoursAndCarriesVersion(t *testing.T) {
+	svc, _ := newTestAuthService()
+	_, token, err := svc.Register("Ann", "ann@example.com", "long-enough-pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := jwt.MapClaims{}
+	if _, err := jwt.ParseWithClaims(token, claims, func(*jwt.Token) (interface{}, error) { return []byte(testSecret), nil }); err != nil {
+		t.Fatal(err)
+	}
+	exp, _ := claims["exp"].(float64)
+	iat, _ := claims["iat"].(float64)
+	if exp-iat != 24*3600 {
+		t.Fatalf("access tokens must last 24h, got %vs", exp-iat)
+	}
+	if tv, ok := claims["tv"].(float64); !ok || tv != 0 {
+		t.Fatalf("token must carry tv=0 for a new user, got %v", claims["tv"])
 	}
 }

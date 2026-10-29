@@ -12,8 +12,9 @@ import (
 
 // AuthUser is the per-request user state loaded from the database.
 type AuthUser struct {
-	Role     string
-	Timezone string
+	Role         string
+	Timezone     string
+	TokenVersion int64
 }
 
 // UserLoader loads a user's current auth state; it returns gorm.ErrRecordNotFound
@@ -78,6 +79,15 @@ func AuthMiddleware(jwtSecret string, loadUser UserLoader) gin.HandlerFunc {
 			return
 		}
 
+		// Tokens issued before the user's last logout or password change are revoked.
+		tokenVersion, ok := claims["tv"].(float64)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid or expired token",
+			})
+			return
+		}
+
 		userID := uint(userIDFloat)
 		user, err := loadUser(userID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -89,6 +99,13 @@ func AuthMiddleware(jwtSecret string, loadUser UserLoader) gin.HandlerFunc {
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 				"error": "Failed to load user",
+			})
+			return
+		}
+
+		if int64(tokenVersion) != user.TokenVersion {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid or expired token",
 			})
 			return
 		}

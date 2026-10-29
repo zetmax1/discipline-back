@@ -344,3 +344,22 @@ func TestVocabularyDedupeKeepsOldestAndMergesFlags(t *testing.T) {
 		t.Fatal("a duplicate (user_id, date, language) must be rejected by the unique index")
 	}
 }
+
+func TestTokenVersionColumn(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 4); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	if err := dbmigrate.UpTo(ctx, db, 5); err != nil {
+		t.Fatalf("token_version migration: %v", err)
+	}
+	var v int64
+	var nullable string
+	mustScan(t, db, `SELECT token_version, (SELECT is_nullable FROM information_schema.columns
+	                  WHERE table_name='users' AND column_name='token_version') FROM users WHERE id = 1`, &v, &nullable)
+	if v != 0 || nullable != "NO" {
+		t.Fatalf("existing users must start at token_version 0 (NOT NULL), got %d nullable=%s", v, nullable)
+	}
+}
