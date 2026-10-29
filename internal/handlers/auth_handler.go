@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -116,6 +117,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 // @Failure      400   {object}  ErrorResponse
 // @Failure      401   {object}  ErrorResponse
 // @Failure      429   {object}  ErrorResponse
+// @Failure      503   {object}  ErrorResponse
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -127,7 +129,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	if locked, retryAfter := h.loginThrottle.Locked(req.Email); locked {
+	ctx := c.Request.Context()
+	locked, retryAfter, err := h.loginThrottle.Locked(ctx, req.Email)
+	if err != nil {
+		// Fail closed: without the shared failure count there is no brute-force protection.
+		log.Printf("login throttle unavailable: %v", err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service temporarily unavailable. Please try again shortly."})
+		return
+	}
+	if locked {
 		c.Header("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 		c.JSON(http.StatusTooManyRequests, gin.H{
 			"error": "Too many failed login attempts. Please try again later.",
@@ -138,7 +148,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	user, token, err := h.authService.Login(req.Email, req.Password)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidCredentials) {
-			h.loginThrottle.RecordFailure(req.Email)
+			if err := h.loginThrottle.RecordFailure(ctx, req.Email); err != nil {
+				log.Printf("login throttle: record failure: %v", err)
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": err.Error(),
 			})
@@ -149,7 +161,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		})
 		return
 	}
-	h.loginThrottle.Reset(req.Email)
+	if err := h.loginThrottle.Reset(ctx, req.Email); err != nil {
+		log.Printf("login throttle: reset: %v", err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Login successful",

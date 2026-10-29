@@ -10,6 +10,7 @@ import (
 
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
+	"discipline-backend/internal/ratelimit"
 )
 
 func newTestRouter(enableDocs bool) *gin.Engine {
@@ -20,7 +21,7 @@ func newTestRouter(enableDocs bool) *gin.Engine {
 		"internal-secret-for-tests-0123456789", enableDocs,
 		func(uint) (*middleware.AuthUser, error) {
 			return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil
-		})
+		}, ratelimit.NewMemoryStore())
 	return r
 }
 

@@ -41,12 +41,15 @@ func main() {
 	// Seed the first admin user if none exists
 	config.SeedAdmin(db, cfg)
 
+	// Shared rate-limit and login-throttle state
+	limits := config.ConnectRedis(cfg)
+
 	// Initialize layers: repository → service → handler
 
 	// Auth
 	userRepo := repositories.NewUserRepository(db)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
-	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(100000))
+	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(limits))
 
 	// Tasks
 	taskRepo := repositories.NewTaskRepository(db)
@@ -69,7 +72,7 @@ func main() {
 	}
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo))
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

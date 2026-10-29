@@ -21,6 +21,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("DB_PASSWORD", "db-password-for-tests")
 	t.Setenv("INTERNAL_JWT_SECRET", "fedcba9876543210fedcba9876543210")
 	t.Setenv("PYTHON_SERVICE_URL", "http://discipline-py.railway.internal:8082")
+	t.Setenv("REDIS_URL", "redis://redis.railway.internal:6379/0")
 }
 
 func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
@@ -35,7 +36,7 @@ func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
 }
 
 func TestLoad_FailsWhenSecretMissing(t *testing.T) {
-	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD", "INTERNAL_JWT_SECRET", "PYTHON_SERVICE_URL"} {
+	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD", "INTERNAL_JWT_SECRET", "PYTHON_SERVICE_URL", "REDIS_URL"} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)
 			t.Setenv(name, "")
@@ -254,5 +255,13 @@ func TestConfigurePool(t *testing.T) {
 	configurePool(db)
 	if got := db.Stats().MaxOpenConnections; got != 10 {
 		t.Fatalf("MaxOpenConns = %d, want 10", got)
+	}
+}
+
+func TestLoad_RejectsInvalidRedisURL(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("REDIS_URL", "localhost:6379")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REDIS_URL") {
+		t.Fatalf("expected a REDIS_URL error, got %v", err)
 	}
 }

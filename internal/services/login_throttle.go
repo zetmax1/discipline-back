@@ -1,122 +1,56 @@
 package services
 
 import (
+	"context"
 	"strings"
-	"sync"
 	"time"
+
+	"discipline-backend/internal/ratelimit"
 )
 
-// Login throttling policy: 5 failures within 15 minutes lock the email for 15 minutes.
+// Login throttling policy: 5 failures within a sliding 15 minutes lock the email
+// until enough of them are older than 15 minutes.
 const (
 	loginMaxFailures   = 5
 	loginFailureWindow = 15 * time.Minute
-	loginLockDuration  = 15 * time.Minute
 )
 
-type loginAttempts struct {
-	failures    int
-	windowStart time.Time
-	lockedUntil time.Time
-}
-
-// LoginThrottle tracks failed logins per email in memory. It counts attempts for
-// any email, existing or not, so the lockout does not reveal which accounts exist.
-// State is per process and resets on restart.
+// LoginThrottle tracks failed logins per email in a shared store. It counts
+// attempts for any email, existing or not, so the lockout does not reveal which
+// accounts exist.
 type LoginThrottle struct {
-	mu         sync.Mutex
-	entries    map[string]*loginAttempts
-	maxEntries int
-	now        func() time.Time
+	store ratelimit.Store
+	now   func() time.Time
 }
 
-// NewLoginThrottle creates a throttle that tracks at most maxEntries emails.
-func NewLoginThrottle(maxEntries int) *LoginThrottle {
-	return &LoginThrottle{
-		entries:    make(map[string]*loginAttempts),
-		maxEntries: maxEntries,
-		now:        time.Now,
-	}
+// NewLoginThrottle creates a throttle backed by store.
+func NewLoginThrottle(store ratelimit.Store) *LoginThrottle {
+	return &LoginThrottle{store: store, now: time.Now}
 }
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+func failureKey(email string) string { return "login:fail:email:" + normalizeEmail(email) }
+
 // Locked reports whether the email is locked and how long until it unlocks.
-func (t *LoginThrottle) Locked(email string) (bool, time.Duration) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	a, ok := t.entries[normalizeEmail(email)]
-	if !ok {
-		return false, 0
+func (t *LoginThrottle) Locked(ctx context.Context, email string) (bool, time.Duration, error) {
+	ev, err := t.store.Events(ctx, failureKey(email), loginFailureWindow)
+	if err != nil || len(ev) < loginMaxFailures {
+		return false, 0, err
 	}
-	if remaining := a.lockedUntil.Sub(t.now()); remaining > 0 {
-		return true, remaining
-	}
-	return false, 0
+	// Unlocks when the failure that keeps the count at the limit leaves the window.
+	freeing := ev[len(ev)-loginMaxFailures]
+	return true, freeing.Add(loginFailureWindow).Sub(t.now()), nil
 }
 
-// RecordFailure counts a failed login and locks the email once the limit is reached.
-func (t *LoginThrottle) RecordFailure(email string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	key := normalizeEmail(email)
-	now := t.now()
-
-	a, ok := t.entries[key]
-	if !ok {
-		if !t.makeRoom(now) {
-			return
-		}
-		a = &loginAttempts{}
-		t.entries[key] = a
-	}
-	if now.Sub(a.windowStart) > loginFailureWindow || (!a.lockedUntil.IsZero() && !now.Before(a.lockedUntil)) {
-		*a = loginAttempts{windowStart: now}
-	}
-	a.failures++
-	if a.failures >= loginMaxFailures {
-		a.lockedUntil = now.Add(loginLockDuration)
-	}
+// RecordFailure counts a failed login.
+func (t *LoginThrottle) RecordFailure(ctx context.Context, email string) error {
+	return t.store.Record(ctx, failureKey(email), loginFailureWindow)
 }
 
 // Reset clears the failure count after a successful login.
-func (t *LoginThrottle) Reset(email string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.entries, normalizeEmail(email))
-}
-
-// makeRoom frees space for a new entry: expired entries go first, then the oldest
-// unlocked one. Active locks are never evicted. Must be called with mu held.
-func (t *LoginThrottle) makeRoom(now time.Time) bool {
-	if len(t.entries) < t.maxEntries {
-		return true
-	}
-	var oldestKey string
-	var oldest time.Time
-	for k, a := range t.entries {
-		locked := now.Before(a.lockedUntil)
-		if !locked && now.Sub(a.windowStart) > loginFailureWindow {
-			delete(t.entries, k)
-			continue
-		}
-		if !locked && (oldestKey == "" || a.windowStart.Before(oldest)) {
-			oldestKey, oldest = k, a.windowStart
-		}
-	}
-	if len(t.entries) < t.maxEntries {
-		return true
-	}
-	if oldestKey == "" {
-		return false
-	}
-	delete(t.entries, oldestKey)
-	return true
-}
-
-func (t *LoginThrottle) size() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return len(t.entries)
+func (t *LoginThrottle) Reset(ctx context.Context, email string) error {
+	return t.store.Clear(ctx, failureKey(email))
 }

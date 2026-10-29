@@ -1,7 +1,9 @@
-# Throwaway Postgres for integration tests only. Data lives in tmpfs and is
-# gone when the container stops. Never point tests at a real database.
+# Throwaway Postgres and Redis for integration tests only. Data lives in tmpfs
+# (Redis keeps nothing on disk) and is gone when the containers stop. Never point
+# tests at a real database or Redis.
 #   docker compose -f docker-compose.test.yml up -d --wait
 #   export TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:55432/postgres?sslmode=disable'
+#   export TEST_REDIS_URL='redis://127.0.0.1:56379/0'
 #   go test -race ./...
 #   docker compose -f docker-compose.test.yml down
 services:
@@ -16,6 +18,16 @@ services:
       - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  redis-test:
+    image: redis:7.4-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 1s
       timeout: 3s
       retries: 30

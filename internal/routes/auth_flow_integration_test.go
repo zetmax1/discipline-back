@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"discipline-backend/internal/handlers"
+	"discipline-backend/internal/ratelimit"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/services"
 	"discipline-backend/internal/testdb"
@@ -22,7 +23,7 @@ func newAppRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	db, _ := testdb.NewMigrated(t)
 	userRepo := repositories.NewUserRepository(db)
-	authHandler := handlers.NewAuthHandler(services.NewAuthService(userRepo, flowJWTSecret), services.NewLoginThrottle(100))
+	authHandler := handlers.NewAuthHandler(services.NewAuthService(userRepo, flowJWTSecret), services.NewLoginThrottle(ratelimit.NewMemoryStore()))
 	taskHandler := handlers.NewTaskHandler(services.NewTaskService(repositories.NewTaskRepository(db)))
 	vocabHandler := handlers.NewVocabHandler(services.NewVocabService(repositories.NewVocabRepository(db)))
 
@@ -30,7 +31,7 @@ func newAppRouter(t *testing.T) *gin.Engine {
 	r := gin.New()
 	SetupRoutes(r, authHandler, taskHandler, handlers.NewQuoteHandler(), vocabHandler,
 		flowJWTSecret, "https://app.example.com", "http://py.invalid", "internal-secret-for-tests-0123456789", false,
-		UserLoader(userRepo))
+		UserLoader(userRepo), ratelimit.NewMemoryStore())
 	return r
 }
 

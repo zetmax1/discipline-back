@@ -10,16 +10,17 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 )
 
 // Config holds all configuration for the application.
 type Config struct {
-	DBHost       string
-	DBPort       string
-	DBUser       string
-	DBPassword   string
-	DBName       string
-	DBSSLMode    string
+	DBHost         string
+	DBPort         string
+	DBUser         string
+	DBPassword     string
+	DBName         string
+	DBSSLMode      string
 	JWTSecret      string
 	Port           string
 	AllowedOrigins string
@@ -34,6 +35,8 @@ type Config struct {
 	AppEnv string
 	// EnableDocs serves Swagger UI when ENABLE_DOCS=true.
 	EnableDocs bool
+	// RedisURL holds the shared rate-limit and login-throttle state (redis:// or rediss://).
+	RedisURL string
 }
 
 // GinMode returns gin's debug mode only when APP_ENV=development.
@@ -72,6 +75,12 @@ func Load() (*Config, error) {
 		problems = append(problems, "INTERNAL_JWT_SECRET must be different from JWT_SECRET")
 	}
 	pythonServiceURL := requireEnv("PYTHON_SERVICE_URL", &problems)
+	redisURL := requireEnv("REDIS_URL", &problems)
+	if redisURL != "" {
+		if _, err := redis.ParseURL(redisURL); err != nil {
+			problems = append(problems, "REDIS_URL must be a redis:// or rediss:// URL")
+		}
+	}
 	dbSSLMode := strings.TrimSpace(os.Getenv("DB_SSLMODE"))
 	if dbSSLMode == "" {
 		dbSSLMode = "require"
@@ -90,21 +99,22 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		DBHost:       getEnv("DB_HOST", "localhost"),
-		DBPort:       getEnv("DB_PORT", "5432"),
-		DBUser:       getEnv("DB_USER", "postgres"),
-		DBPassword:   dbPassword,
-		DBName:         getEnv("DB_NAME", "discipline"),
-		DBSSLMode:      dbSSLMode,
-		JWTSecret:      jwtSecret,
-		Port:           getEnv("PORT", "8080"),
-		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:5173,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
+		DBHost:            getEnv("DB_HOST", "localhost"),
+		DBPort:            getEnv("DB_PORT", "5432"),
+		DBUser:            getEnv("DB_USER", "postgres"),
+		DBPassword:        dbPassword,
+		DBName:            getEnv("DB_NAME", "discipline"),
+		DBSSLMode:         dbSSLMode,
+		JWTSecret:         jwtSecret,
+		Port:              getEnv("PORT", "8080"),
+		AllowedOrigins:    getEnv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:5173,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
 		InternalJWTSecret: internalJWTSecret,
 		PythonServiceURL:  pythonServiceURL,
 		TrustedProxies:    trustedProxies,
 		TrustedIPHeader:   strings.TrimSpace(os.Getenv("TRUSTED_IP_HEADER")),
 		AppEnv:            strings.TrimSpace(os.Getenv("APP_ENV")),
 		EnableDocs:        strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_DOCS")), "true"),
+		RedisURL:          redisURL,
 	}, nil
 }
 

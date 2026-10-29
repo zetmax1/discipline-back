@@ -1,13 +1,17 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"discipline-backend/internal/models"
+	"discipline-backend/internal/ratelimit"
 	"discipline-backend/internal/services"
 )
 
@@ -54,7 +58,7 @@ func loginBody(email, password string) string {
 
 func TestLogin_LocksEmailAfterFiveFailures(t *testing.T) {
 	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
-	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(1000)))
+	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(ratelimit.NewMemoryStore())))
 
 	for i := 0; i < 5; i++ {
 		w := doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "wrong"))
@@ -80,9 +84,36 @@ func TestLogin_LocksEmailAfterFiveFailures(t *testing.T) {
 	}
 }
 
+// downStore fails every call, like an unreachable Redis.
+type downStore struct{}
+
+var errStoreDown = errors.New("redis down")
+
+func (downStore) Hit(context.Context, string, int, time.Duration) (bool, time.Duration, error) {
+	return false, 0, errStoreDown
+}
+func (downStore) Record(context.Context, string, time.Duration) error { return errStoreDown }
+func (downStore) Events(context.Context, string, time.Duration) ([]time.Time, error) {
+	return nil, errStoreDown
+}
+func (downStore) Clear(context.Context, string) error { return errStoreDown }
+func (downStore) Ping(context.Context) error          { return errStoreDown }
+
+func TestLogin_ThrottleStoreDownIs503(t *testing.T) {
+	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
+	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(downStore{})))
+	w := doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "correct-password"))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("login must fail closed while the throttle store is down, got %d", w.Code)
+	}
+	if svc.loginCalls != 0 {
+		t.Fatal("no password check may run without throttling")
+	}
+}
+
 func TestLogin_UnknownEmailIsThrottledToo(t *testing.T) {
 	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
-	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(1000)))
+	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(ratelimit.NewMemoryStore())))
 	for i := 0; i < 5; i++ {
 		doRequest(r, http.MethodPost, "/auth/login", loginBody("ghost@example.com", "x"))
 	}
@@ -94,7 +125,7 @@ func TestLogin_UnknownEmailIsThrottledToo(t *testing.T) {
 
 func TestLogin_SuccessResetsFailures(t *testing.T) {
 	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
-	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(1000)))
+	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(ratelimit.NewMemoryStore())))
 	for i := 0; i < 4; i++ {
 		doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "wrong"))
 	}
@@ -111,7 +142,7 @@ func TestLogin_SuccessResetsFailures(t *testing.T) {
 
 func realAuthRouter(t *testing.T) *gin.Engine {
 	t.Helper()
-	return authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef"), services.NewLoginThrottle(100)))
+	return authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef"), services.NewLoginThrottle(ratelimit.NewMemoryStore())))
 }
 
 func TestRegister_WeakPasswordIs400AndDuplicateIs409(t *testing.T) {

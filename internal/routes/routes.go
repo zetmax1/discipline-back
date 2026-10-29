@@ -8,6 +8,7 @@ import (
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/models"
+	"discipline-backend/internal/ratelimit"
 	"discipline-backend/internal/repositories"
 )
 
@@ -34,11 +35,12 @@ func SetupRoutes(
 	internalJWTSecret string,
 	enableDocs bool,
 	loadUser middleware.UserLoader,
+	limits ratelimit.Store,
 ) {
 	// Global Middlewares
 	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.SecurityHeaders())
-	r.Use(middleware.GlobalRateLimiter())
+	r.Use(middleware.RateLimit(limits, middleware.GlobalPolicy, middleware.ByClientIP))
 	r.Use(middleware.CORSMiddleware(allowedOrigins))
 
 	r.NoRoute(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
@@ -62,7 +64,7 @@ func SetupRoutes(
 	{
 		// Public auth routes with strict rate limiting
 		auth := api.Group("/auth")
-		auth.Use(middleware.AuthRateLimiter())
+		auth.Use(middleware.RateLimit(limits, middleware.AuthPolicy, middleware.ByClientIP))
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
@@ -93,7 +95,7 @@ func SetupRoutes(
 
 			// Analytics (proxied to Python service with strict rate limiting)
 			analytics := protected.Group("/analytics")
-			analytics.Use(middleware.AnalyticsRateLimiter())
+			analytics.Use(middleware.RateLimit(limits, middleware.AnalyticsPolicy, middleware.ByClientIP))
 			{
 				analytics.GET("", analyticsHandler.GetAnalytics)
 				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)
