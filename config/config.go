@@ -35,6 +35,8 @@ type Config struct {
 	AppEnv string
 	// EnableDocs serves Swagger UI when ENABLE_DOCS=true.
 	EnableDocs bool
+	// EnableIPDebug serves GET /debug/ip when ENABLE_IP_DEBUG=true (staging only).
+	EnableIPDebug bool
 	// RedisURL holds the shared rate-limit and login-throttle state (redis:// or rediss://).
 	RedisURL string
 }
@@ -114,6 +116,7 @@ func Load() (*Config, error) {
 		TrustedIPHeader:   strings.TrimSpace(os.Getenv("TRUSTED_IP_HEADER")),
 		AppEnv:            strings.TrimSpace(os.Getenv("APP_ENV")),
 		EnableDocs:        strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_DOCS")), "true"),
+		EnableIPDebug:     strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_IP_DEBUG")), "true"),
 		RedisURL:          redisURL,
 	}, nil
 }

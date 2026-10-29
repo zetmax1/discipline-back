@@ -265,3 +265,17 @@ func TestLoad_RejectsInvalidRedisURL(t *testing.T) {
 		t.Fatalf("expected a REDIS_URL error, got %v", err)
 	}
 }
+
+func TestLoad_IPDebugOffUnlessTrue(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "false": false, "1": false, "true": true, " TRUE ": true} {
+		setRequiredEnv(t)
+		t.Setenv("ENABLE_IP_DEBUG", value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.EnableIPDebug != want {
+			t.Errorf("ENABLE_IP_DEBUG=%q: got %v, want %v", value, cfg.EnableIPDebug, want)
+		}
+	}
+}

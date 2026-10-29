@@ -73,6 +73,7 @@ func main() {
 
 	// Register all routes
 	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
+	routes.SetupIPDebug(r, cfg.EnableIPDebug)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
