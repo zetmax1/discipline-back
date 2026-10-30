@@ -5,6 +5,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/errtrack"
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
@@ -48,10 +49,10 @@ func SetupRoutes(
 	r.Use(middleware.CORSMiddleware(allowedOrigins))
 
 	r.NoRoute(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
-		c.JSON(404, gin.H{"error": "route not found"})
+		apierr.JSON(c, 404, apierr.NotFound, "route not found")
 	})
 	r.NoMethod(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
-		c.JSON(405, gin.H{"error": "method not allowed"})
+		apierr.JSON(c, 405, apierr.MethodNotAllowed, "method not allowed")
 	})
 
 	// Swagger UI (only when ENABLE_DOCS=true)

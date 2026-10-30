@@ -9,7 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"discipline-backend/internal/apierr"
+	"discipline-backend/internal/contracttest"
 	"discipline-backend/internal/models"
+	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/services"
 )
 
@@ -104,4 +107,35 @@ func TestTaskHandlers_MapDBErrorsTo500AndMissingTo404(t *testing.T) {
 			t.Errorf("PUT with %v: expected %d, got %d", tc.err, tc.want, w.Code)
 		}
 	}
+}
+
+func TestTaskHandlers_ErrorBodiesCarryCodes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{gorm.ErrRecordNotFound, "task_not_found"},
+		{errors.New("connection refused"), "internal_error"},
+		{repositories.ErrTaskOverlap, "task_overlap"},
+		{apierr.Wrap(services.ErrInvalidTask, apierr.TaskEndBeforeStart, "endTime must be after startTime"), "task_end_before_start"},
+	}
+	for _, tc := range cases {
+		h := NewTaskHandler(&errTaskService{err: tc.err})
+		r := gin.New()
+		r.Use(func(c *gin.Context) { c.Set("userID", uint(1)) })
+		r.PUT("/tasks/:id", h.UpdateTask)
+		w := doRequest(r, http.MethodPut, "/tasks/7", `{"name":"x"}`)
+		if !strings.Contains(w.Body.String(), `"code":"`+tc.want+`"`) {
+			t.Errorf("%v: want code %s, got %s", tc.err, tc.want, w.Body.String())
+		}
+		contracttest.Validate(t, "errors", "error", w.Body.Bytes())
+	}
+
+	r := taskRouter(&fakeTaskService{})
+	w := doRequest(r, http.MethodPost, "/tasks/bulk", `{"tasks":[]}`)
+	if !strings.Contains(w.Body.String(), `"code":"validation_failed"`) {
+		t.Errorf("binding errors: want validation_failed, got %s", w.Body.String())
+	}
+	contracttest.Validate(t, "errors", "error", w.Body.Bytes())
 }

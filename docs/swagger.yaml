@@ -76,6 +76,10 @@ definitions:
     type: object
   handlers.ErrorResponse:
     properties:
+      code:
+        description: stable; the web translates it (contracts/errors.schema.json)
+        example: validation_failed
+        type: string
       details:
         example: 'Key: ''Email'' required'
         type: string
@@ -95,6 +99,9 @@ definitions:
       captchaRequired:
         example: false
         type: boolean
+      code:
+        example: invalid_credentials
+        type: string
       error:
         example: invalid email or password
         type: string

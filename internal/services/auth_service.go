@@ -10,15 +10,16 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
 )
 
 // ErrInvalidCredentials is returned by Login for an unknown email or wrong password.
-var ErrInvalidCredentials = errors.New("invalid email or password")
+var ErrInvalidCredentials = apierr.New(apierr.InvalidCredentials, "invalid email or password")
 
 // ErrEmailTaken is returned when registering with an email that already exists.
-var ErrEmailTaken = errors.New("user with this email already exists")
+var ErrEmailTaken = apierr.New(apierr.EmailTaken, "user with this email already exists")
 
 // ErrPasswordPolicy is wrapped by every password policy violation.
 var ErrPasswordPolicy = errors.New("password does not meet policy")
@@ -32,16 +33,16 @@ const (
 // ValidatePassword enforces the password policy for registration and password changes.
 func ValidatePassword(password string) error {
 	if utf8.RuneCountInString(password) < minPasswordChars {
-		return fmt.Errorf("%w: password must be at least %d characters", ErrPasswordPolicy, minPasswordChars)
+		return apierr.Wrap(ErrPasswordPolicy, apierr.PasswordTooShort, fmt.Sprintf("password must be at least %d characters", minPasswordChars))
 	}
 	if len(password) > maxPasswordBytes {
-		return fmt.Errorf("%w: password must be at most %d bytes", ErrPasswordPolicy, maxPasswordBytes)
+		return apierr.Wrap(ErrPasswordPolicy, apierr.PasswordTooLong, fmt.Sprintf("password must be at most %d bytes", maxPasswordBytes))
 	}
 	return nil
 }
 
 // ErrInvalidTimezone is returned for a time zone that is not a loadable IANA name.
-var ErrInvalidTimezone = errors.New("timezone must be a valid IANA time zone name, e.g. Asia/Tashkent")
+var ErrInvalidTimezone = apierr.New(apierr.InvalidTimezone, "timezone must be a valid IANA time zone name, e.g. Asia/Tashkent")
 
 // ValidateTimezone accepts IANA names that time.LoadLocation can load ("Local" is rejected).
 func ValidateTimezone(tz string) error {
@@ -53,6 +54,13 @@ func ValidateTimezone(tz string) error {
 	}
 	return nil
 }
+
+// Profile update errors.
+var (
+	ErrUserNotFound             = apierr.New(apierr.UserNotFound, "user not found")
+	ErrCurrentPasswordRequired  = apierr.New(apierr.CurrentPasswordRequired, "current password is required")
+	ErrCurrentPasswordIncorrect = apierr.New(apierr.CurrentPasswordIncorrect, "current password is incorrect")
+)
 
 // compareHashAndPassword is a variable so tests can observe calls.
 var compareHashAndPassword = bcrypt.CompareHashAndPassword
@@ -180,7 +188,7 @@ func (s *authService) GetUserByID(id uint) (*models.User, error) {
 func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPassword, timezone string) (*models.User, string, error) {
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
-		return nil, "", errors.New("user not found")
+		return nil, "", ErrUserNotFound
 	}
 
 	if timezone != "" {
@@ -197,9 +205,9 @@ func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPasswo
 	if changingEmail || changingPassword {
 		if oldPassword == "" {
 			if changingEmail {
-				return nil, "", errors.New("current password is required to change email")
+				return nil, "", fmt.Errorf("%w to change email", ErrCurrentPasswordRequired)
 			}
-			return nil, "", errors.New("current password is required to set a new password")
+			return nil, "", fmt.Errorf("%w to set a new password", ErrCurrentPasswordRequired)
 		}
 		if changingPassword {
 			if err := ValidatePassword(newPassword); err != nil {
@@ -207,7 +215,7 @@ func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPasswo
 			}
 		}
 		if err := compareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
-			return nil, "", errors.New("current password is incorrect")
+			return nil, "", ErrCurrentPasswordIncorrect
 		}
 	}
 
@@ -217,7 +225,7 @@ func (s *authService) UpdateProfile(id uint, name, email, oldPassword, newPasswo
 	if changingEmail {
 		existing, _ := s.userRepo.FindByEmail(email)
 		if existing != nil && existing.ID != id {
-			return nil, "", errors.New("email already in use")
+			return nil, "", ErrEmailTaken
 		}
 		user.Email = email
 	}

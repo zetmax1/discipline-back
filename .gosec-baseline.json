@@ -22,5 +22,11 @@
     "file": "internal/services/vocab_service.go",
     "code": "r := rand.New(rand.NewSource(int64(h)))",
     "reason": "Deterministic seeded pick of the day's word; must be reproducible, not secret."
+  },
+  {
+    "rule_id": "G101",
+    "file": "internal/apierr/apierr.go",
+    "code": "InvalidCredentials       Code = \"invalid_credentials\"",
+    "reason": "Error code name for a failed login (the value is the public code string), not a credential."
   }
 ]

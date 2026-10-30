@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/golang-jwt/jwt/v5"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/logging"
 )
 
@@ -135,10 +136,10 @@ func relayValidationError(c *gin.Context, body io.Reader, limit int64) {
 	}
 	raw, err := io.ReadAll(io.LimitReader(body, limit))
 	if err != nil || json.Unmarshal(raw, &payload) != nil || payload.Error == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Analytics service returned an invalid validation error"})
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Analytics service returned an invalid validation error")
 		return
 	}
-	c.JSON(http.StatusUnprocessableEntity, gin.H{"error": payload.Error, "details": payload.Details})
+	apierr.JSON(c, http.StatusUnprocessableEntity, apierr.AnalyticsValidationFailed, payload.Error, gin.H{"details": payload.Details})
 }
 
 // upstreamURL builds a Python service URL from a fixed path and server-built query values.
@@ -154,7 +155,7 @@ func (h *AnalyticsHandler) upstreamURL(path string, query url.Values) string {
 func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body []byte) {
 	token, err := h.internalToken(c.MustGet("userID").(uint), userLocation(c).String())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to create analytics request")
 		return
 	}
 
@@ -164,7 +165,7 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 	}
 	req, err := http.NewRequestWithContext(c.Request.Context(), method, endpoint, rd)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to create analytics request")
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -177,7 +178,7 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to analytics service"})
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Failed to connect to analytics service")
 		return
 	}
 	defer resp.Body.Close()
@@ -187,24 +188,24 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analytics service returned an error"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.AnalyticsUnavailable, "Analytics service returned an error")
 		return
 	}
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, h.maxResponseBytes+1))
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to read analytics response"})
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Failed to read analytics response")
 		return
 	}
 	if int64(len(respBody)) > h.maxResponseBytes {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Analytics response too large"})
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Analytics response too large")
 		return
 	}
 
 	// Unmarshal JSON to avoid returning raw string to Gin
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid JSON from analytics service"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.AnalyticsUnavailable, "Invalid JSON from analytics service")
 		return
 	}
 
@@ -230,7 +231,7 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	case "month":
 		pythonRoute = "/analytics/monthly"
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "range must be 'week' or 'month'"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.RangeInvalid, "range must be 'week' or 'month'")
 		return
 	}
 
@@ -266,9 +267,7 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 	if raw := c.Query("days"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < minFocusDays || n > maxFocusDays {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("days must be an integer between %d and %d", minFocusDays, maxFocusDays),
-			})
+			apierr.JSON(c, http.StatusBadRequest, apierr.DaysInvalid, fmt.Sprintf("days must be an integer between %d and %d", minFocusDays, maxFocusDays))
 			return
 		}
 		days = n
@@ -294,17 +293,14 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 func (h *AnalyticsHandler) GenerateSmartSchedule(c *gin.Context) {
 	req, err := decodeSmartSchedule(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
 	// Re-encode the validated struct; the client's raw body is never forwarded.
 	body, err := json.Marshal(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to create request")
 		return
 	}
 

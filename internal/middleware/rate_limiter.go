@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/ratelimit"
 )
 
@@ -75,9 +76,7 @@ func RateLimit(store ratelimit.Store, p Policy, key KeyFunc) gin.HandlerFunc {
 		if err != nil {
 			slog.ErrorContext(c.Request.Context(), "rate limit store unavailable", "policy", p.Name, "error", err)
 			if p.FailClosed {
-				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-					"error": "Service temporarily unavailable. Please try again shortly.",
-				})
+				apierr.Abort(c, http.StatusServiceUnavailable, apierr.ServiceUnavailable, "Service temporarily unavailable. Please try again shortly.")
 				return
 			}
 			c.Next()
@@ -85,9 +84,7 @@ func RateLimit(store ratelimit.Store, p Policy, key KeyFunc) gin.HandlerFunc {
 		}
 		if !allowed {
 			c.Header("Retry-After", RetryAfterSeconds(retryAfter))
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many requests. Please try again later.",
-			})
+			apierr.Abort(c, http.StatusTooManyRequests, apierr.RateLimited, "Too many requests. Please try again later.")
 			return
 		}
 		c.Next()

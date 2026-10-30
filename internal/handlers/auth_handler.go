@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/captcha"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/services"
@@ -49,6 +50,7 @@ type LoginRequest struct {
 // send a Turnstile token with the next attempt.
 type LoginErrorResponse struct {
 	Error           string `json:"error" example:"invalid email or password"`
+	Code            string `json:"code" example:"invalid_credentials"`
 	CaptchaRequired bool   `json:"captchaRequired" example:"false"`
 }
 
@@ -62,6 +64,7 @@ type AuthResponse struct {
 // ErrorResponse is the standard error response.
 type ErrorResponse struct {
 	Error   string `json:"error" example:"Validation failed"`
+	Code    string `json:"code" example:"validation_failed"` // stable; the web translates it (contracts/errors.schema.json)
 	Details string `json:"details,omitempty" example:"Key: 'Email' required"`
 }
 
@@ -75,17 +78,31 @@ type UserResponse struct {
 func respondRegisterError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, services.ErrPasswordPolicy):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		code, _ := apierr.CodeOf(err)
+		apierr.JSON(c, http.StatusBadRequest, code, err.Error())
 	case errors.Is(err, services.ErrEmailTaken):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		apierr.JSON(c, http.StatusConflict, apierr.EmailTaken, err.Error())
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Registration failed"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Registration failed")
 	}
 }
 
 // respondUnavailable answers 503 when a protection (throttle store, captcha check) cannot run.
+// respondProfileError sends a coded profile error as 400 (404 for a missing user) and anything else as 500.
+func respondProfileError(c *gin.Context, err error) {
+	code, ok := apierr.CodeOf(err)
+	switch {
+	case !ok:
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to update profile")
+	case code == apierr.UserNotFound:
+		apierr.JSON(c, http.StatusNotFound, code, err.Error())
+	default:
+		apierr.JSON(c, http.StatusBadRequest, code, err.Error())
+	}
+}
+
 func respondUnavailable(c *gin.Context) {
-	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service temporarily unavailable. Please try again shortly."})
+	apierr.JSON(c, http.StatusServiceUnavailable, apierr.ServiceUnavailable, "Service temporarily unavailable. Please try again shortly.")
 }
 
 // --- Handlers ---
@@ -105,10 +122,7 @@ func respondUnavailable(c *gin.Context) {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
@@ -119,7 +133,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Please complete the verification.", "captchaRequired": true})
+		apierr.JSON(c, http.StatusBadRequest, apierr.CaptchaRequired, "Please complete the verification.", gin.H{"captchaRequired": true})
 		return
 	}
 
@@ -152,10 +166,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
@@ -170,9 +181,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	if state.RetryAfter > 0 {
 		c.Header("Retry-After", strconv.Itoa(max(1, int(math.Ceil(state.RetryAfter.Seconds())))))
-		c.JSON(http.StatusTooManyRequests, gin.H{
-			"error": "Too many failed login attempts. Please try again later.",
-		})
+		apierr.JSON(c, http.StatusTooManyRequests, apierr.LoginThrottled, "Too many failed login attempts. Please try again later.")
 		return
 	}
 	if state.CaptchaRequired {
@@ -183,7 +192,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 		if !ok {
-			c.JSON(http.StatusUnauthorized, LoginErrorResponse{Error: "Please complete the verification.", CaptchaRequired: true})
+			apierr.JSON(c, http.StatusUnauthorized, apierr.CaptchaRequired, "Please complete the verification.", gin.H{"captchaRequired": true})
 			return
 		}
 	}
@@ -196,12 +205,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 				slog.ErrorContext(ctx, "login throttle: record failure", "error", recErr)
 				captchaNext = state.CaptchaRequired
 			}
-			c.JSON(http.StatusUnauthorized, LoginErrorResponse{Error: err.Error(), CaptchaRequired: captchaNext})
+			apierr.JSON(c, http.StatusUnauthorized, apierr.InvalidCredentials, err.Error(), gin.H{"captchaRequired": captchaNext})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Login failed",
-		})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Login failed")
 		return
 	}
 	if err := h.loginThrottle.RecordSuccess(ctx, req.Email, ip); err != nil {
@@ -228,17 +235,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "User not found in context",
-		})
+		apierr.JSON(c, http.StatusUnauthorized, apierr.AuthRequired, "User not found in context")
 		return
 	}
 
 	user, err := h.authService.GetUserByID(userID.(uint))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "User not found",
-		})
+		apierr.JSON(c, http.StatusNotFound, apierr.UserNotFound, "User not found")
 		return
 	}
 
@@ -263,10 +266,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 func (h *AuthHandler) RegisterAdmin(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
@@ -308,18 +308,13 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 
 	var req UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
 	user, token, err := h.authService.UpdateProfile(userID, req.Name, req.Email, req.OldPassword, req.NewPassword, req.Timezone)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+		respondProfileError(c, err)
 		return
 	}
 
@@ -341,7 +336,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 // @Router       /auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	if err := h.authService.Logout(c.MustGet("userID").(uint)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Logout failed"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Logout failed")
 		return
 	}
 	c.Status(http.StatusNoContent)

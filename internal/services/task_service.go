@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
 )
@@ -74,7 +75,7 @@ func (s *taskService) UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task,
 func (s *taskService) SaveWeekPlan(userID uint, weekStart string, tasks []*models.Task) (string, int64, error) {
 	start, err := time.Parse("2006-01-02", weekStart)
 	if err != nil || start.Format("2006-01-02") != weekStart || start.Weekday() != time.Monday {
-		return "", 0, invalidTask("weekStart must be a Monday (YYYY-MM-DD)")
+		return "", 0, invalidTask(apierr.PlanWeekInvalid, "weekStart must be a Monday (YYYY-MM-DD)")
 	}
 	end := start.AddDate(0, 0, 6).Format("2006-01-02")
 	planID, err := newUUID()
@@ -86,7 +87,7 @@ func (s *taskService) SaveWeekPlan(userID uint, weekStart string, tasks []*model
 			return "", 0, fmt.Errorf("tasks[%d]: %w", i, err)
 		}
 		if string(t.Date) < weekStart || string(t.Date) > end {
-			return "", 0, invalidTask("tasks[%d]: date must be within %s..%s", i, weekStart, end)
+			return "", 0, invalidTask(apierr.TaskDateInvalid, "tasks[%d]: date must be within %s..%s", i, weekStart, end)
 		}
 		t.UserID = userID
 		t.Source = models.SourceSmartSchedule
@@ -113,7 +114,7 @@ func newUUID() (string, error) {
 // AdjustDistractions adds +1 or -1 to a block's distraction count in one SQL statement.
 func (s *taskService) AdjustDistractions(id, userID uint, delta int) (*models.Task, error) {
 	if delta != 1 && delta != -1 {
-		return nil, invalidTask("delta must be 1 or -1")
+		return nil, invalidTask(apierr.TaskDistractionsInvalid, "delta must be 1 or -1")
 	}
 	return s.taskRepo.AdjustDistractions(id, userID, delta)
 }

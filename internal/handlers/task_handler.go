@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/services"
@@ -63,13 +64,17 @@ type TaskListResponse struct {
 func respondTaskError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, services.ErrInvalidTask):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		code, ok := apierr.CodeOf(err)
+		if !ok {
+			code = apierr.ValidationFailed
+		}
+		apierr.JSON(c, http.StatusBadRequest, code, err.Error())
 	case errors.Is(err, repositories.ErrTaskOverlap):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		apierr.JSON(c, http.StatusConflict, apierr.TaskOverlap, err.Error())
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		apierr.JSON(c, http.StatusNotFound, apierr.TaskNotFound, "Task not found")
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to save task")
 	}
 }
 
@@ -92,10 +97,7 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 
 	var req CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
@@ -137,10 +139,7 @@ func (h *TaskHandler) BulkCreateTasks(c *gin.Context) {
 
 	var req BulkCreateTasksRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
@@ -190,9 +189,7 @@ func (h *TaskHandler) GetTasks(c *gin.Context) {
 
 	tasks, err := h.taskService.GetTasks(userID, date)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch tasks",
-		})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to fetch tasks")
 		return
 	}
 
@@ -219,16 +216,13 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	taskID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.TaskIDInvalid, "Invalid task ID")
 		return
 	}
 
 	var req UpdateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
@@ -271,7 +265,7 @@ func (h *TaskHandler) SavePlan(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	var req SavePlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Validation failed", "details": err.Error()})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 	tasks := make([]*models.Task, 0, len(req.Tasks))
@@ -316,12 +310,12 @@ func (h *TaskHandler) AdjustDistractions(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	taskID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.TaskIDInvalid, "Invalid task ID")
 		return
 	}
 	var req AdjustDistractionsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Validation failed", "details": err.Error()})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 	task, err := h.taskService.AdjustDistractions(uint(taskID), userID, *req.Delta)
@@ -346,7 +340,7 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	taskID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.TaskIDInvalid, "Invalid task ID")
 		return
 	}
 

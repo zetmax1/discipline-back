@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"discipline-backend/internal/apierr"
+
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,9 +16,7 @@ const MaxRequestBodyBytes = 1 << 20 // 1 MB
 func BodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.ContentLength > maxBytes {
-			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error": "Request body too large",
-			})
+			apierr.Abort(c, http.StatusRequestEntityTooLarge, apierr.BodyTooLarge, "Request body too large")
 			return
 		}
 		if c.Request.Body != nil {

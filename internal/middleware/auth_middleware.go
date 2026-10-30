@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gorm"
+
+	"discipline-backend/internal/apierr"
 )
 
 // AuthUser is the per-request user state loaded from the database.
@@ -38,18 +40,14 @@ func AuthMiddleware(jwtSecret string, loadUser UserLoader) gin.HandlerFunc {
 		// Get the Authorization header
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header is required",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.AuthRequired, "Authorization header is required")
 			return
 		}
 
 		// Expect "Bearer <token>"
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header must be in format: Bearer <token>",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.TokenInvalid, "Authorization header must be in format: Bearer <token>")
 			return
 		}
 
@@ -59,58 +57,44 @@ func AuthMiddleware(jwtSecret string, loadUser UserLoader) gin.HandlerFunc {
 		token, err := jwt.Parse(tokenString, hmacKey(jwtSecret))
 
 		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid or expired token",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.TokenInvalid, "Invalid or expired token")
 			return
 		}
 
 		// Extract claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid token claims",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.TokenInvalid, "Invalid token claims")
 			return
 		}
 
 		// Get user ID from claims
 		userIDFloat, ok := claims["user_id"].(float64)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid user ID in token",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.TokenInvalid, "Invalid user ID in token")
 			return
 		}
 
 		// Tokens issued before the user's last logout or password change are revoked.
 		tokenVersion, ok := claims["tv"].(float64)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid or expired token",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.TokenInvalid, "Invalid or expired token")
 			return
 		}
 
 		userID := uint(userIDFloat)
 		user, err := loadUser(userID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid or expired token",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.TokenInvalid, "Invalid or expired token")
 			return
 		}
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Failed to load user",
-			})
+			apierr.Abort(c, http.StatusInternalServerError, apierr.InternalError, "Failed to load user")
 			return
 		}
 
 		if int64(tokenVersion) != user.TokenVersion {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid or expired token",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.TokenInvalid, "Invalid or expired token")
 			return
 		}
 

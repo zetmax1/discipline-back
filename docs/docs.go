@@ -1139,6 +1139,11 @@ const docTemplate = `{
         "handlers.ErrorResponse": {
             "type": "object",
             "properties": {
+                "code": {
+                    "description": "stable; the web translates it (contracts/errors.schema.json)",
+                    "type": "string",
+                    "example": "validation_failed"
+                },
                 "details": {
                     "type": "string",
                     "example": "Key: 'Email' required"
@@ -1166,6 +1171,10 @@ const docTemplate = `{
                 "captchaRequired": {
                     "type": "boolean",
                     "example": false
+                },
+                "code": {
+                    "type": "string",
+                    "example": "invalid_credentials"
                 },
                 "error": {
                     "type": "string",

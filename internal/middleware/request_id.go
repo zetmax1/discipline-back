@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/logging"
 )
 
@@ -66,6 +67,6 @@ func AccessLog() gin.HandlerFunc {
 func Recovery() gin.HandlerFunc {
 	return gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, err any) {
 		slog.ErrorContext(c.Request.Context(), "panic", "error", fmt.Sprint(err), "stack", string(debug.Stack()))
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		apierr.Abort(c, http.StatusInternalServerError, apierr.InternalError, "Internal server error")
 	})
 }
