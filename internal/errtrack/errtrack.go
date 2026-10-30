@@ -24,9 +24,19 @@ func Init(o Options) (bool, error) {
 		return false, nil
 	}
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn:              o.DSN,
-		Environment:      o.Environment,
-		SendDefaultPII:   false,
+		Dsn:         o.DSN,
+		Environment: o.Environment,
+		// Collect nothing personal; scrub (BeforeSend) is a second layer.
+		DataCollection: &sentry.DataCollection{
+			UserInfo: sentry.Set(false),
+			Cookies:  &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionOff},
+			HTTPHeaders: &sentry.HeaderCollectionConfig{
+				Request:  &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionAllowList, Terms: []string{"User-Agent", "Content-Type", "X-Request-ID"}},
+				Response: &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionOff},
+			},
+			HTTPBodies:  []sentry.BodyType{}, // empty, not nil: no bodies at all
+			QueryParams: &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionOff},
+		},
 		AttachStacktrace: true,
 		Transport:        o.transport,
 		BeforeSend:       scrub,
