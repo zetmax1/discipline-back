@@ -71,7 +71,7 @@ func TestMergeTaskUpdate(t *testing.T) {
 		timesMove bool
 	}{
 		{"status only", TaskUpdate{Status: ptr("completed")}, true, []string{"status"}, false},
-		{"bad status", TaskUpdate{Status: ptr("done")}, false, nil, false},
+		{"bad status", TaskUpdate{Status: ptr("moved")}, false, nil, false},
 		{"distractions 100", TaskUpdate{Distractions: ptr(100)}, true, []string{"distractions"}, false},
 		{"distractions 101", TaskUpdate{Distractions: ptr(101)}, false, nil, false},
 		{"distractions -1", TaskUpdate{Distractions: ptr(-1)}, false, nil, false},
@@ -115,5 +115,14 @@ func TestMergeTaskUpdate_LegacyInvalidRowCanStillChangeStatus(t *testing.T) {
 	legacy.StartTime, legacy.EndTime = "10:00", "09:00" // stored before validation existed
 	if _, _, _, err := mergeTaskUpdate(legacy, TaskUpdate{Status: ptr("completed")}); err != nil {
 		t.Fatalf("a status-only update must not re-validate untouched times: %v", err)
+	}
+}
+
+func TestMergeTaskUpdate_MapsLegacyStatuses(t *testing.T) {
+	for legacy, want := range map[string]string{"pending": models.StatusPlanned, "completed": models.StatusDone} {
+		cols, merged, _, err := mergeTaskUpdate(validTask(), TaskUpdate{Status: ptr(legacy)})
+		if err != nil || cols["status"] != want || merged.Status != want {
+			t.Fatalf("%s: want %s, got %v %v %v", legacy, want, cols, merged.Status, err)
+		}
 	}
 }

@@ -794,6 +794,70 @@
                 }
             }
         },
+        "/tasks/{id}/check-in": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets what happened in the block. Sending the same check-in again gives the same result.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tasks"
+                ],
+                "summary": "Check in a block (done / partial / skipped)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Block ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Check-in",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CheckInRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BlockResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/tasks/{id}/distractions": {
             "post": {
                 "security": [
@@ -846,6 +910,77 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/tasks/{id}/move": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks the block \"moved\" and creates a new planned block (movedFromId) at the new date/time. Needs an Idempotency-Key header (8-100 characters): a replay returns the first result.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tasks"
+                ],
+                "summary": "Move a block",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Block ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unique per move",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "New date and time",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.MoveTaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BlockResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -1058,6 +1193,14 @@
                 }
             }
         },
+        "handlers.BlockResponse": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "$ref": "#/definitions/models.Task"
+                }
+            }
+        },
         "handlers.BulkCreateTasksRequest": {
             "type": "object",
             "required": [
@@ -1084,6 +1227,37 @@
                 "quote": {
                     "type": "string",
                     "example": "Discipline is the bridge between goals and accomplishment."
+                }
+            }
+        },
+        "handlers.CheckInRequest": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "actualEndMin": {
+                    "type": "integer",
+                    "example": 600
+                },
+                "actualStartMin": {
+                    "description": "minutes 0-1440",
+                    "type": "integer",
+                    "example": 545
+                },
+                "focusRating": {
+                    "description": "1-5",
+                    "type": "integer",
+                    "example": 4
+                },
+                "note": {
+                    "type": "string",
+                    "example": "Phone call in the middle"
+                },
+                "status": {
+                    "description": "done | partial | skipped",
+                    "type": "string",
+                    "example": "done"
                 }
             }
         },
@@ -1196,6 +1370,28 @@
                     "type": "string",
                     "maxLength": 2048,
                     "example": "0.turnstile-token"
+                }
+            }
+        },
+        "handlers.MoveTaskRequest": {
+            "type": "object",
+            "required": [
+                "date",
+                "endMin",
+                "startMin"
+            ],
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "example": "2026-10-30"
+                },
+                "endMin": {
+                    "type": "integer",
+                    "example": 600
+                },
+                "startMin": {
+                    "type": "integer",
+                    "example": 540
                 }
             }
         },
@@ -1321,6 +1517,80 @@
             "properties": {
                 "user": {
                     "$ref": "#/definitions/models.User"
+                }
+            }
+        },
+        "models.Task": {
+            "type": "object",
+            "properties": {
+                "actualEndMin": {
+                    "type": "integer"
+                },
+                "actualStartMin": {
+                    "description": "Lifecycle (F1): what actually happened.",
+                    "type": "integer"
+                },
+                "category": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "date": {
+                    "type": "string"
+                },
+                "distractions": {
+                    "type": "integer"
+                },
+                "endMin": {
+                    "type": "integer"
+                },
+                "endTime": {
+                    "type": "string"
+                },
+                "energy": {
+                    "type": "integer"
+                },
+                "focusRating": {
+                    "description": "1-5, asked after done/partial",
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "movedFromId": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "planId": {
+                    "description": "set for smart-schedule blocks",
+                    "type": "string"
+                },
+                "source": {
+                    "description": "manual | smart-schedule",
+                    "type": "string"
+                },
+                "startMin": {
+                    "description": "minutes 0-1440",
+                    "type": "integer"
+                },
+                "startTime": {
+                    "description": "kept until the TIME columns are dropped",
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
                 }
             }
         },

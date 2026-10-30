@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -449,5 +450,100 @@ func TestVocabularyDateMigrationAbortsAndListsBadRows(t *testing.T) {
 	mustScan(t, db, `SELECT count(*), min(pg_typeof(date)::text) FROM vocabulary_words`, &n, &dateType)
 	if n != 3 || dateType != "text" {
 		t.Fatalf("aborted migration must not change data: rows=%d type=%s", n, dateType)
+	}
+}
+
+// A production-shaped copy: every legacy status, a 24:00 end, a 09:30 start and an inverted legacy row.
+func TestBlockLifecycleMigrationKeepsEveryBlock(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 7); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	mustExec(t, db, `INSERT INTO tasks (id, user_id, name, category, start_time, end_time, date, status, distractions, energy) VALUES
+		(1, 1, 'Late study', 'study', '09:30', '24:00', '2026-10-29', 'pending', 0, 3),
+		(2, 1, 'Deep', 'deep-work', '08:00', '09:00', '2026-10-28', 'completed', 2, 5),
+		(3, 1, 'Gym', 'gym', '17:00', '18:30', '2026-10-28', 'skipped', 0, 3),
+		(4, 1, 'Legacy', 'admin', '10:00', '09:00', '2026-10-27', 'pending', 0, 3)`)
+
+	if err := dbmigrate.UpTo(ctx, db, 8); err != nil {
+		t.Fatalf("block lifecycle migration: %v", err)
+	}
+	want := map[int]string{
+		1: "2026-10-29 570 1440 planned study", 2: "2026-10-28 480 540 done deep-work",
+		3: "2026-10-28 1020 1110 skipped gym", 4: "2026-10-27 600 540 planned admin",
+	}
+	rows, err := db.Query(`SELECT id, date::text, start_min, end_min, status, category FROM tasks ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, s, e int
+		var date, status, category string
+		if err := rows.Scan(&id, &date, &s, &e, &status, &category); err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%s %d %d %s %s", date, s, e, status, category); got != want[id] {
+			t.Errorf("task %d: want %q, got %q", id, want[id], got)
+		}
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status = 'in-progress' WHERE id = 1`); err == nil {
+		t.Error("only the new statuses are allowed after the migration")
+	}
+	if _, err := db.Exec(`UPDATE tasks SET focus_rating = 6 WHERE id = 2`); err == nil {
+		t.Error("focus rating must be 1-5")
+	}
+	if _, err := db.Exec(`UPDATE tasks SET end_min = 1441 WHERE id = 2`); err == nil {
+		t.Error("minutes must stay within 0-1440")
+	}
+	mustExec(t, db, `UPDATE tasks SET status = 'partial', actual_start_min = 480, actual_end_min = 510 WHERE id = 2`)
+	mustExec(t, db, `INSERT INTO tasks (id, user_id, name, category, start_min, end_min, date, status, moved_from_id)
+		VALUES (5, 1, 'Moved', 'study', 600, 1440, '2026-10-30', 'planned', 1)`)
+	var endTime string
+	mustScan(t, db, `SELECT end_time::text FROM tasks WHERE id = 5`, &endTime)
+	if endTime != "24:00:00" {
+		t.Errorf("minutes-only writes must fill the TIME columns too, got %s", endTime)
+	}
+	// The previous API version (still running during a deploy) writes TIME columns and old statuses.
+	mustExec(t, db, `INSERT INTO tasks (id, user_id, name, category, start_time, end_time, date, status)
+		VALUES (6, 1, 'Old API', 'study', '07:15', '08:00', '2026-10-30', 'pending')`)
+	mustExec(t, db, `UPDATE tasks SET status = 'completed', start_time = '07:30' WHERE id = 6`)
+	var oldStart, oldEnd int
+	var oldStatus string
+	mustScan(t, db, `SELECT start_min, end_min, status FROM tasks WHERE id = 6`, &oldStart, &oldEnd, &oldStatus)
+	if oldStart != 450 || oldEnd != 480 || oldStatus != "done" {
+		t.Errorf("old API writes must be translated, got %d %d %s", oldStart, oldEnd, oldStatus)
+	}
+	mustExec(t, db, `UPDATE tasks SET status = 'moved' WHERE id = 1`)
+
+	if err := dbmigrate.DownTo(ctx, db, 7); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	var statuses string
+	mustScan(t, db, `SELECT string_agg(status, ',' ORDER BY id) FROM tasks`, &statuses)
+	if statuses != "skipped,completed,skipped,pending,pending,completed" {
+		t.Fatalf("down must map statuses back, got %s", statuses)
+	}
+}
+
+func TestBlockLifecycleMigrationAbortsOnUnknownStatus(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.NewEmpty(t)
+	if err := dbmigrate.UpTo(ctx, db, 7); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	mustExec(t, db, `INSERT INTO tasks (id, user_id, name, category, start_time, end_time, date, status)
+		VALUES (9, 1, 'Odd', 'study', '09:00', '10:00', '2026-10-29', 'in-progress')`)
+	err := dbmigrate.UpTo(ctx, db, 8)
+	if err == nil || !strings.Contains(err.Error(), "tasks.id=9") {
+		t.Fatalf("want the migration to abort and name the row, got %v", err)
+	}
+	var status string
+	mustScan(t, db, `SELECT status FROM tasks WHERE id = 9`, &status)
+	if status != "in-progress" {
+		t.Fatalf("nothing may change when the migration aborts, got %q", status)
 	}
 }

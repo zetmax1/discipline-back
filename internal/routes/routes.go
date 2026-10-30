@@ -95,6 +95,10 @@ func SetupRoutes(
 			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
 			protected.POST("/tasks/:id/distractions", taskHandler.AdjustDistractions)
 			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
+			if featureHandler.Enabled("F1") { // the daily loop
+				protected.POST("/tasks/:id/check-in", taskHandler.CheckIn)
+				protected.POST("/tasks/:id/move", taskHandler.MoveTask)
+			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
 

@@ -29,6 +29,10 @@ type TaskRepository interface {
 	// ReplaceWeekPlan deletes the user's generated blocks dated weekStart..weekEnd and
 	// inserts tasks, all in one transaction; returns how many blocks were replaced.
 	ReplaceWeekPlan(userID uint, weekStart, weekEnd models.Date, tasks []*models.Task) (int64, error)
+	// MoveTask turns a block into "moved" and inserts its replacement (built from the locked
+	// current row) in one transaction. With an idempotency key, a replay returns the block the
+	// first call created.
+	MoveTask(id, userID uint, key string, build func(current models.Task) (*models.Task, error)) (*models.Task, error)
 	// AdjustDistractions atomically adds delta to the counter, clamped to 0-100.
 	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
 	Delete(id, userID uint) error
@@ -58,13 +62,15 @@ func lockUserTasks(tx *gorm.DB, userID uint) error {
 }
 
 // checkOverlap reports ErrTaskOverlap if [start, end) intersects another of the user's
-// blocks on date (excluding excludeID). Touching blocks do not overlap, and skipped
-// blocks do not occupy time.
+// blocks on date (excluding excludeID). Touching blocks do not overlap, and skipped or
+// moved blocks do not occupy time.
 func checkOverlap(tx *gorm.DB, userID uint, date models.Date, start, end models.ClockTime, excludeID uint) error {
+	s, _ := start.Minutes()
+	e, _ := end.Minutes()
 	var ids []uint
 	err := tx.Raw(`SELECT id FROM tasks
-		WHERE user_id = ? AND date = ? AND id <> ? AND status <> ? AND start_time < ? AND end_time > ?
-		LIMIT 1`, userID, date, excludeID, models.StatusSkipped, end, start).Scan(&ids).Error
+		WHERE user_id = ? AND date = ? AND id <> ? AND status NOT IN (?, ?) AND start_min < ? AND end_min > ?
+		LIMIT 1`, userID, date, excludeID, models.StatusSkipped, models.StatusMoved, e, s).Scan(&ids).Error
 	if err != nil {
 		return err
 	}
@@ -179,9 +185,9 @@ func (r *taskRepository) UpdateTask(id, userID uint, merge TaskMerge) (*models.T
 		if err != nil {
 			return err
 		}
-		// A skipped block occupies no time; un-skipping one claims its slot again.
-		unskipped := current.Status == models.StatusSkipped && merged.Status != models.StatusSkipped
-		if merged.Status != models.StatusSkipped && (timesMoved || unskipped) {
+		// A skipped or moved block occupies no time; reviving one claims its slot again.
+		revived := !models.OccupiesTime(current.Status) && models.OccupiesTime(merged.Status)
+		if models.OccupiesTime(merged.Status) && (timesMoved || revived) {
 			if err := checkOverlap(tx, userID, merged.Date, merged.StartTime, merged.EndTime, id); err != nil {
 				return err
 			}
@@ -222,4 +228,61 @@ func (r *taskRepository) Delete(id, userID uint) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// ErrTaskNotMovable is returned when moving a block that is already done, partial or moved.
+var ErrTaskNotMovable = errors.New("block can no longer be moved")
+
+func (r *taskRepository) MoveTask(id, userID uint, key string, build func(current models.Task) (*models.Task, error)) (*models.Task, error) {
+	var out models.Task
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockUserTasks(tx, userID); err != nil {
+			return err
+		}
+		var earlier []uint
+		if err := tx.Raw(`SELECT resource_id FROM idempotency_keys WHERE user_id = ? AND key = ?`, userID, key).
+			Scan(&earlier).Error; err != nil {
+			return err
+		}
+		if len(earlier) > 0 {
+			return tx.Where("id = ? AND user_id = ?", earlier[0], userID).First(&out).Error
+		}
+		var current models.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND user_id = ?", id, userID).First(&current).Error; err != nil {
+			return err
+		}
+		switch current.Status {
+		case models.StatusDone, models.StatusPartial, models.StatusMoved:
+			return ErrTaskNotMovable
+		}
+		next, err := build(current)
+		if err != nil {
+			return err
+		}
+		// The old block stops occupying its slot first, so a move within the same day can overlap it.
+		if err := tx.Model(&models.Task{}).Where("id = ? AND user_id = ?", id, userID).
+			Update("status", models.StatusMoved).Error; err != nil {
+			return err
+		}
+		if err := checkOverlap(tx, userID, next.Date, next.StartTime, next.EndTime, 0); err != nil {
+			return err
+		}
+		if err := tx.Create(next).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM idempotency_keys WHERE created_at < now() - interval '1 day'`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO idempotency_keys (user_id, key, resource_id) VALUES (?, ?, ?)`,
+			userID, key, next.ID).Error; err != nil {
+			return err
+		}
+		out = *next
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

@@ -21,8 +21,13 @@ var (
 		models.CategoryDeepWork: true, models.CategoryStudy: true, models.CategoryAdmin: true,
 		models.CategoryGym: true, models.CategoryRest: true,
 	}
+	// Statuses a PUT may set; "moved" only comes from the move endpoint.
 	taskStatuses = map[string]bool{
-		models.StatusPending: true, models.StatusCompleted: true, models.StatusSkipped: true,
+		models.StatusPlanned: true, models.StatusInProgress: true, models.StatusDone: true,
+		models.StatusPartial: true, models.StatusSkipped: true,
+	}
+	legacyStatuses = map[string]string{
+		models.LegacyStatusPending: models.StatusPlanned, models.LegacyStatusCompleted: models.StatusDone,
 	}
 )
 
@@ -120,10 +125,14 @@ func mergeTaskUpdate(current models.Task, u TaskUpdate) (map[string]any, models.
 		cols["category"], merged.Category = *u.Category, *u.Category
 	}
 	if u.Status != nil {
-		if !taskStatuses[*u.Status] {
-			return nil, current, false, invalidTask(apierr.TaskStatusInvalid, "status must be one of pending, completed, skipped")
+		status := *u.Status
+		if mapped, ok := legacyStatuses[status]; ok {
+			status = mapped
 		}
-		cols["status"], merged.Status = *u.Status, *u.Status
+		if !taskStatuses[status] {
+			return nil, current, false, invalidTask(apierr.TaskStatusInvalid, "status must be one of planned, in_progress, done, partial, skipped")
+		}
+		cols["status"], merged.Status = status, status
 	}
 	if u.Energy != nil {
 		if err := validateTaskEnergy(*u.Energy); err != nil {
@@ -160,4 +169,53 @@ func mergeTaskUpdate(current models.Task, u TaskUpdate) (map[string]any, models.
 		}
 	}
 	return cols, merged, timesMoved, nil
+}
+
+const maxTaskNoteChars = 500
+
+// CheckIn is what happened in a block: done / partial / skipped, plus optional actual times
+// (default: the planned times), a focus rating 1-5 and a note.
+type CheckIn struct {
+	Status                       string
+	ActualStartMin, ActualEndMin *int
+	FocusRating                  *int
+	Note                         *string
+}
+
+// checkInColumns validates a check-in against the current block and returns the columns to write.
+// Writing the same check-in twice gives the same row (offline replays are harmless).
+func checkInColumns(current models.Task, in CheckIn) (map[string]any, error) {
+	switch in.Status {
+	case models.StatusSkipped:
+		return map[string]any{"status": in.Status, "actual_start_min": nil, "actual_end_min": nil,
+			"focus_rating": nil}, nil
+	case models.StatusDone, models.StatusPartial:
+	default:
+		return nil, invalidTask(apierr.TaskStatusInvalid, "check-in status must be done, partial or skipped")
+	}
+	start, end := current.StartMin, current.EndMin
+	if in.ActualStartMin != nil {
+		start = *in.ActualStartMin
+	}
+	if in.ActualEndMin != nil {
+		end = *in.ActualEndMin
+	}
+	if start < 0 || start > 1440 || end < 0 || end > 1440 {
+		return nil, invalidTask(apierr.TaskTimeInvalid, "actual times must be minutes 0-1440")
+	}
+	if end <= start {
+		return nil, invalidTask(apierr.TaskEndBeforeStart, "actual end must be after actual start")
+	}
+	if in.FocusRating != nil && (*in.FocusRating < 1 || *in.FocusRating > 5) {
+		return nil, invalidTask(apierr.TaskFocusRatingInvalid, "focusRating must be between 1 and 5")
+	}
+	cols := map[string]any{"status": in.Status, "actual_start_min": start, "actual_end_min": end, "focus_rating": in.FocusRating}
+	if in.Note != nil {
+		note := strings.TrimSpace(*in.Note)
+		if utf8.RuneCountInString(note) > maxTaskNoteChars {
+			return nil, invalidTask(apierr.TaskNoteTooLong, "note must be at most %d characters", maxTaskNoteChars)
+		}
+		cols["note"] = note
+	}
+	return cols, nil
 }

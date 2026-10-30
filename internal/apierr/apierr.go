@@ -48,6 +48,10 @@ const (
 	TaskDistractionsInvalid Code = "task_distractions_invalid"
 	TaskOverlap             Code = "task_overlap"
 	PlanWeekInvalid         Code = "plan_week_invalid"
+	TaskFocusRatingInvalid  Code = "task_focus_rating_invalid"
+	TaskNoteTooLong         Code = "task_note_too_long"
+	TaskNotMovable          Code = "task_not_movable"
+	IdempotencyKeyRequired  Code = "idempotency_key_required"
 
 	WordNotFound  Code = "word_not_found"
 	WordIDInvalid Code = "word_id_invalid"
@@ -66,6 +70,7 @@ var All = []Code{
 	LoginThrottled, EmailTaken, PasswordTooShort, PasswordTooLong, CurrentPasswordRequired, CurrentPasswordIncorrect,
 	InvalidTimezone, TaskNotFound, TaskIDInvalid, TaskNameLength, TaskDateInvalid, TaskTimeInvalid, TaskEndBeforeStart,
 	TaskCategoryInvalid, TaskEnergyInvalid, TaskStatusInvalid, TaskDistractionsInvalid, TaskOverlap, PlanWeekInvalid,
+	TaskFocusRatingInvalid, TaskNoteTooLong, TaskNotMovable, IdempotencyKeyRequired,
 	WordNotFound, WordIDInvalid, DateInvalid, RangeInvalid, DaysInvalid, AnalyticsUnavailable, AnalyticsValidationFailed,
 }
 

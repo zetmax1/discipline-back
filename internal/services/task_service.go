@@ -18,6 +18,10 @@ type TaskService interface {
 	GetTasks(userID uint, date string) ([]models.Task, error)
 	UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task, error)
 	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
+	// CheckIn records what happened in a block (done / partial / skipped).
+	CheckIn(id, userID uint, in CheckIn) (*models.Task, error)
+	// MoveTask marks the block moved and creates its replacement; key makes replays safe.
+	MoveTask(id, userID uint, key string, date string, startMin, endMin int) (*models.Task, error)
 	SaveWeekPlan(userID uint, weekStart string, tasks []*models.Task) (planID string, replaced int64, err error)
 	DeleteTask(id, userID uint) error
 }
@@ -121,4 +125,34 @@ func (s *taskService) AdjustDistractions(id, userID uint, delta int) (*models.Ta
 
 func (s *taskService) DeleteTask(id, userID uint) error {
 	return s.taskRepo.Delete(id, userID)
+}
+
+func (s *taskService) CheckIn(id, userID uint, in CheckIn) (*models.Task, error) {
+	return s.taskRepo.UpdateTask(id, userID, func(current models.Task) (map[string]any, models.Task, bool, error) {
+		cols, err := checkInColumns(current, in)
+		if err != nil {
+			return nil, current, false, err
+		}
+		merged := current
+		merged.Status = in.Status
+		return cols, merged, false, nil
+	})
+}
+
+func (s *taskService) MoveTask(id, userID uint, key string, date string, startMin, endMin int) (*models.Task, error) {
+	if err := validateTaskDate(date); err != nil {
+		return nil, err
+	}
+	start, end := models.ClockFromMinutes(startMin), models.ClockFromMinutes(endMin)
+	if err := validateTaskTimes(start, end); err != nil {
+		return nil, err
+	}
+	return s.taskRepo.MoveTask(id, userID, key, func(current models.Task) (*models.Task, error) {
+		movedFrom := current.ID
+		return &models.Task{
+			UserID: userID, Name: current.Name, Category: current.Category, Energy: current.Energy,
+			StartTime: start, EndTime: end, Date: models.Date(date), Status: models.StatusPlanned,
+			Source: models.SourceManual, MovedFromID: &movedFrom,
+		}, nil
+	})
 }

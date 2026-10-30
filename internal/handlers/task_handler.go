@@ -71,6 +71,8 @@ func respondTaskError(c *gin.Context, err error) {
 		apierr.JSON(c, http.StatusBadRequest, code, err.Error())
 	case errors.Is(err, repositories.ErrTaskOverlap):
 		apierr.JSON(c, http.StatusConflict, apierr.TaskOverlap, err.Error())
+	case errors.Is(err, repositories.ErrTaskNotMovable):
+		apierr.JSON(c, http.StatusConflict, apierr.TaskNotMovable, err.Error())
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		apierr.JSON(c, http.StatusNotFound, apierr.TaskNotFound, "Task not found")
 	default:
@@ -109,7 +111,7 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 		EndTime:   models.ClockTime(req.EndTime),
 		Energy:    req.Energy,
 		Date:      models.Date(req.Date),
-		Status:    models.StatusPending,
+		Status:    models.StatusPlanned,
 	}
 
 	if err := h.taskService.CreateTask(task); err != nil {
@@ -153,7 +155,7 @@ func (h *TaskHandler) BulkCreateTasks(c *gin.Context) {
 			EndTime:   models.ClockTime(tr.EndTime),
 			Energy:    tr.Energy,
 			Date:      models.Date(tr.Date),
-			Status:    models.StatusPending,
+			Status:    models.StatusPlanned,
 		})
 	}
 
@@ -277,7 +279,7 @@ func (h *TaskHandler) SavePlan(c *gin.Context) {
 			EndTime:   models.ClockTime(tr.EndTime),
 			Energy:    tr.Energy,
 			Date:      models.Date(tr.Date),
-			Status:    models.StatusPending,
+			Status:    models.StatusPlanned,
 		})
 	}
 	planID, replaced, err := h.taskService.SaveWeekPlan(userID, req.WeekStart, tasks)
@@ -350,4 +352,102 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
+}
+
+// CheckInRequest records what happened in a block. Actual times default to the planned ones.
+type CheckInRequest struct {
+	Status         string  `json:"status" binding:"required" example:"done"` // done | partial | skipped
+	ActualStartMin *int    `json:"actualStartMin,omitempty" example:"545"`   // minutes 0-1440
+	ActualEndMin   *int    `json:"actualEndMin,omitempty" example:"600"`
+	FocusRating    *int    `json:"focusRating,omitempty" example:"4"` // 1-5
+	Note           *string `json:"note,omitempty" example:"Phone call in the middle"`
+}
+
+// BlockResponse wraps one block.
+type BlockResponse struct {
+	Task models.Task `json:"task"`
+}
+
+// CheckIn godoc
+// @Summary      Check in a block (done / partial / skipped)
+// @Description  Sets what happened in the block. Sending the same check-in again gives the same result.
+// @Tags         Tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      int             true  "Block ID"
+// @Param        body  body      CheckInRequest  true  "Check-in"
+// @Success      200   {object}  BlockResponse
+// @Failure      400   {object}  ErrorResponse
+// @Failure      404   {object}  ErrorResponse
+// @Failure      409   {object}  ErrorResponse
+// @Router       /tasks/{id}/check-in [post]
+func (h *TaskHandler) CheckIn(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	taskID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		apierr.JSON(c, http.StatusBadRequest, apierr.TaskIDInvalid, "Invalid task ID")
+		return
+	}
+	var req CheckInRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
+		return
+	}
+	task, err := h.taskService.CheckIn(uint(taskID), userID, services.CheckIn{
+		Status: req.Status, ActualStartMin: req.ActualStartMin, ActualEndMin: req.ActualEndMin,
+		FocusRating: req.FocusRating, Note: req.Note,
+	})
+	if err != nil {
+		respondTaskError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, BlockResponse{Task: *task})
+}
+
+// MoveTaskRequest is where a block moves to.
+type MoveTaskRequest struct {
+	Date     string `json:"date" binding:"required" example:"2026-10-30"`
+	StartMin *int   `json:"startMin" binding:"required" example:"540"`
+	EndMin   *int   `json:"endMin" binding:"required" example:"600"`
+}
+
+// MoveTask godoc
+// @Summary      Move a block
+// @Description  Marks the block "moved" and creates a new planned block (movedFromId) at the new date/time. Needs an Idempotency-Key header (8-100 characters): a replay returns the first result.
+// @Tags         Tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id               path      int              true  "Block ID"
+// @Param        Idempotency-Key  header    string           true  "Unique per move"
+// @Param        body             body      MoveTaskRequest  true  "New date and time"
+// @Success      201              {object}  BlockResponse
+// @Failure      400              {object}  ErrorResponse
+// @Failure      404              {object}  ErrorResponse
+// @Failure      409              {object}  ErrorResponse
+// @Router       /tasks/{id}/move [post]
+func (h *TaskHandler) MoveTask(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	taskID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		apierr.JSON(c, http.StatusBadRequest, apierr.TaskIDInvalid, "Invalid task ID")
+		return
+	}
+	key := c.GetHeader("Idempotency-Key")
+	if n := len(key); n < 8 || n > 100 {
+		apierr.JSON(c, http.StatusBadRequest, apierr.IdempotencyKeyRequired, "Idempotency-Key header (8-100 characters) is required")
+		return
+	}
+	var req MoveTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
+		return
+	}
+	task, err := h.taskService.MoveTask(uint(taskID), userID, key, req.Date, *req.StartMin, *req.EndMin)
+	if err != nil {
+		respondTaskError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, BlockResponse{Task: *task})
 }

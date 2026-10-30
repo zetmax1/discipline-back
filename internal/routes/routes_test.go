@@ -124,3 +124,27 @@ func TestFeaturesRoute_OnlyForSignedInUsers(t *testing.T) {
 		t.Fatalf("signed in: want 200 with [F1], got %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestDailyLoopRoutesFollowFeatureF1(t *testing.T) {
+	served := func(r *gin.Engine) bool {
+		for _, rt := range r.Routes() {
+			if rt.Path == "/api/tasks/:id/check-in" {
+				return true
+			}
+		}
+		return false
+	}
+	if !served(newTestRouter(false)) {
+		t.Fatal("with F1 on, the check-in route must exist")
+	}
+	gin.SetMode(gin.TestMode)
+	off := gin.New()
+	SetupRoutes(off, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
+		handlers.NewFeatureHandler(nil), "jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
+		"internal-secret-for-tests-0123456789", false,
+		func(uint) (*middleware.AuthUser, error) { return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil },
+		ratelimit.NewMemoryStore())
+	if served(off) {
+		t.Fatal("with F1 off, the check-in route must not exist")
+	}
+}

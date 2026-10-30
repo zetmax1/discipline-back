@@ -66,3 +66,11 @@ func (c ClockTime) Minutes() (int, bool) {
 	}
 	return h*60 + m, true
 }
+
+// ClockFromMinutes formats minutes since midnight as "HH:MM" (1440 -> "24:00"); out of range gives "".
+func ClockFromMinutes(m int) ClockTime {
+	if m < 0 || m > 1440 {
+		return ""
+	}
+	return ClockTime(fmt.Sprintf("%02d:%02d", m/60, m%60))
+}

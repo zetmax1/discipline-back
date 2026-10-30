@@ -69,6 +69,8 @@ func newTaskEnv(t *testing.T) *taskEnv {
 	r.POST("/tasks", h.CreateTask)
 	r.POST("/tasks/bulk", h.BulkCreateTasks)
 	r.PUT("/tasks/:id", h.UpdateTask)
+	r.POST("/tasks/:id/check-in", h.CheckIn)
+	r.POST("/tasks/:id/move", h.MoveTask)
 	r.POST("/tasks/:id/distractions", h.AdjustDistractions)
 	r.PUT("/tasks/plan", h.SavePlan)
 	env.r = r
@@ -179,7 +181,7 @@ func TestUpdateTask_RejectsInvalidAndOverlapping(t *testing.T) {
 	if c := put(b, `{"endTime":"10:30"}`); c != http.StatusBadRequest {
 		t.Fatalf("end before start on update must be 400, got %d", c)
 	}
-	for _, body := range []string{`{"status":"done"}`, `{"energy":0}`, `{"distractions":101}`, `{"category":"nap"}`, `{"date":"2026-02-30"}`, `{"name":""}`} {
+	for _, body := range []string{`{"status":"moved"}`, `{"energy":0}`, `{"distractions":101}`, `{"category":"nap"}`, `{"date":"2026-02-30"}`, `{"name":""}`} {
 		if c := put(a, body); c != http.StatusBadRequest {
 			t.Errorf("%s: expected 400, got %d", body, c)
 		}
@@ -225,7 +227,7 @@ func TestUpdateTask_WritesOnlyProvidedFields(t *testing.T) {
 	}
 	var stored models.Task
 	e.db.First(&stored, id)
-	if stored.Distractions != 7 || stored.Status != "completed" {
+	if stored.Distractions != 7 || stored.Status != "done" {
 		t.Fatalf("expected distractions 7 and completed, got %+v", stored)
 	}
 }

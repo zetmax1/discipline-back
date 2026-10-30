@@ -20,6 +20,11 @@ definitions:
       user:
         $ref: '#/definitions/models.User'
     type: object
+  handlers.BlockResponse:
+    properties:
+      task:
+        $ref: '#/definitions/models.Task'
+    type: object
   handlers.BulkCreateTasksRequest:
     properties:
       tasks:
@@ -39,6 +44,29 @@ definitions:
       quote:
         example: Discipline is the bridge between goals and accomplishment.
         type: string
+    type: object
+  handlers.CheckInRequest:
+    properties:
+      actualEndMin:
+        example: 600
+        type: integer
+      actualStartMin:
+        description: minutes 0-1440
+        example: 545
+        type: integer
+      focusRating:
+        description: 1-5
+        example: 4
+        type: integer
+      note:
+        example: Phone call in the middle
+        type: string
+      status:
+        description: done | partial | skipped
+        example: done
+        type: string
+    required:
+    - status
     type: object
   handlers.CreateTaskRequest:
     properties:
@@ -123,6 +151,22 @@ definitions:
     required:
     - email
     - password
+    type: object
+  handlers.MoveTaskRequest:
+    properties:
+      date:
+        example: "2026-10-30"
+        type: string
+      endMin:
+        example: 600
+        type: integer
+      startMin:
+        example: 540
+        type: integer
+    required:
+    - date
+    - endMin
+    - startMin
     type: object
   handlers.RegisterRequest:
     properties:
@@ -216,6 +260,57 @@ definitions:
     properties:
       user:
         $ref: '#/definitions/models.User'
+    type: object
+  models.Task:
+    properties:
+      actualEndMin:
+        type: integer
+      actualStartMin:
+        description: 'Lifecycle (F1): what actually happened.'
+        type: integer
+      category:
+        type: string
+      created_at:
+        type: string
+      date:
+        type: string
+      distractions:
+        type: integer
+      endMin:
+        type: integer
+      endTime:
+        type: string
+      energy:
+        type: integer
+      focusRating:
+        description: 1-5, asked after done/partial
+        type: integer
+      id:
+        type: integer
+      movedFromId:
+        type: integer
+      name:
+        type: string
+      note:
+        type: string
+      planId:
+        description: set for smart-schedule blocks
+        type: string
+      source:
+        description: manual | smart-schedule
+        type: string
+      startMin:
+        description: minutes 0-1440
+        type: integer
+      startTime:
+        description: kept until the TIME columns are dropped
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: integer
     type: object
   models.User:
     properties:
@@ -689,6 +784,48 @@ paths:
       summary: Update a task
       tags:
       - Tasks
+  /tasks/{id}/check-in:
+    post:
+      consumes:
+      - application/json
+      description: Sets what happened in the block. Sending the same check-in again
+        gives the same result.
+      parameters:
+      - description: Block ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Check-in
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CheckInRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BlockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Check in a block (done / partial / skipped)
+      tags:
+      - Tasks
   /tasks/{id}/distractions:
     post:
       consumes:
@@ -726,6 +863,54 @@ paths:
       security:
       - BearerAuth: []
       summary: Increment or decrement distractions
+      tags:
+      - Tasks
+  /tasks/{id}/move:
+    post:
+      consumes:
+      - application/json
+      description: 'Marks the block "moved" and creates a new planned block (movedFromId)
+        at the new date/time. Needs an Idempotency-Key header (8-100 characters):
+        a replay returns the first result.'
+      parameters:
+      - description: Block ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Unique per move
+        in: header
+        name: Idempotency-Key
+        required: true
+        type: string
+      - description: New date and time
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.MoveTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.BlockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Move a block
       tags:
       - Tasks
   /tasks/bulk:

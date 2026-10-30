@@ -23,6 +23,16 @@ func NewFeatureHandler(enabled []string) *FeatureHandler {
 	return &FeatureHandler{enabled: enabled}
 }
 
+// Enabled reports whether FEATURE_<id>=true.
+func (h *FeatureHandler) Enabled(id string) bool {
+	for _, f := range h.enabled {
+		if f == id {
+			return true
+		}
+	}
+	return false
+}
+
 // List godoc
 // @Summary      Enabled feature flags
 // @Description  Ids of the features switched on with FEATURE_<id>=true on the server. Anything not listed is off.
