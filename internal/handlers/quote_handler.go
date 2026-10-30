@@ -32,6 +32,12 @@ func NewQuoteHandler() *QuoteHandler {
 	}
 }
 
+// quoteAPIURL is the ZenQuotes endpoint (overridden in tests).
+var quoteAPIURL = "https://zenquotes.io/api/random"
+
+// maxQuoteResponseBytes caps how much of a quote response is read.
+const maxQuoteResponseBytes = 64 << 10
+
 // fallbackQuotes are used when the external API is unreachable.
 var fallbackQuotes = []CachedQuote{
 	{Quote: "Discipline is the bridge between goals and accomplishment.", Author: "Jim Rohn"},
@@ -72,14 +78,14 @@ func (h *QuoteHandler) GetQuote(c *gin.Context) {
 // fetchQuote gets a quote from ZenQuotes API or falls back to local list.
 func (h *QuoteHandler) fetchQuote() CachedQuote {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("https://zenquotes.io/api/random")
+	resp, err := client.Get(quoteAPIURL)
 	if err != nil {
 		return h.useFallback()
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxQuoteResponseBytes+1))
+	if err != nil || len(body) > maxQuoteResponseBytes {
 		return h.useFallback()
 	}
 
