@@ -22,6 +22,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("INTERNAL_JWT_SECRET", "fedcba9876543210fedcba9876543210")
 	t.Setenv("PYTHON_SERVICE_URL", "http://discipline-py.railway.internal:8082")
 	t.Setenv("REDIS_URL", "redis://redis.railway.internal:6379/0")
+	t.Setenv("TURNSTILE_SECRET", "turnstile-secret-for-tests")
 }
 
 func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
@@ -36,7 +37,7 @@ func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
 }
 
 func TestLoad_FailsWhenSecretMissing(t *testing.T) {
-	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD", "INTERNAL_JWT_SECRET", "PYTHON_SERVICE_URL", "REDIS_URL"} {
+	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD", "INTERNAL_JWT_SECRET", "PYTHON_SERVICE_URL", "REDIS_URL", "TURNSTILE_SECRET"} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)
 			t.Setenv(name, "")

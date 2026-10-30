@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,11 @@ import (
 	"discipline-backend/internal/testdb"
 )
 
+// acceptAllCaptcha stands in for Turnstile in flows that are not about the captcha.
+type acceptAllCaptcha struct{}
+
+func (acceptAllCaptcha) Verify(context.Context, string) (bool, error) { return true, nil }
+
 const flowJWTSecret = "jwt-secret-for-tests-0123456789abcdef"
 
 // newAppRouter wires the real handlers, services and repositories to a migrated test DB.
@@ -23,7 +29,7 @@ func newAppRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	db, _ := testdb.NewMigrated(t)
 	userRepo := repositories.NewUserRepository(db)
-	authHandler := handlers.NewAuthHandler(services.NewAuthService(userRepo, flowJWTSecret), services.NewLoginThrottle(ratelimit.NewMemoryStore()))
+	authHandler := handlers.NewAuthHandler(services.NewAuthService(userRepo, flowJWTSecret), services.NewLoginThrottle(ratelimit.NewMemoryStore()), acceptAllCaptcha{})
 	taskHandler := handlers.NewTaskHandler(services.NewTaskService(repositories.NewTaskRepository(db)))
 	vocabHandler := handlers.NewVocabHandler(services.NewVocabService(repositories.NewVocabRepository(db)))
 
@@ -59,9 +65,9 @@ func tokenFrom(t *testing.T, w *httptest.ResponseRecorder) string {
 
 func TestTokenRejectedAfterLogout(t *testing.T) {
 	r := newAppRouter(t)
-	reg := call(r, http.MethodPost, "/api/auth/register", "", `{"name":"Ann","email":"ann@example.com","password":"long-enough-pw"}`)
+	reg := call(r, http.MethodPost, "/api/auth/register", "", `{"name":"Ann","email":"ann@example.com","password":"long-enough-pw","turnstileToken":"t"}`)
 	token := tokenFrom(t, reg)
-	other := tokenFrom(t, call(r, http.MethodPost, "/api/auth/login", "", `{"email":"ann@example.com","password":"long-enough-pw"}`))
+	other := tokenFrom(t, call(r, http.MethodPost, "/api/auth/login", "", `{"email":"ann@example.com","password":"long-enough-pw","turnstileToken":"t"}`))
 
 	if w := call(r, http.MethodGet, "/api/me", token, ""); w.Code != http.StatusOK {
 		t.Fatalf("fresh token must work, got %d", w.Code)
@@ -79,7 +85,7 @@ func TestTokenRejectedAfterLogout(t *testing.T) {
 		t.Fatalf("logout with a revoked token must be 401, got %d", w.Code)
 	}
 
-	fresh := tokenFrom(t, call(r, http.MethodPost, "/api/auth/login", "", `{"email":"ann@example.com","password":"long-enough-pw"}`))
+	fresh := tokenFrom(t, call(r, http.MethodPost, "/api/auth/login", "", `{"email":"ann@example.com","password":"long-enough-pw","turnstileToken":"t"}`))
 	if w := call(r, http.MethodGet, "/api/me", fresh, ""); w.Code != http.StatusOK {
 		t.Fatalf("logging in again must work, got %d", w.Code)
 	}
@@ -87,8 +93,8 @@ func TestTokenRejectedAfterLogout(t *testing.T) {
 
 func TestTokenRejectedAfterPasswordChange(t *testing.T) {
 	r := newAppRouter(t)
-	token := tokenFrom(t, call(r, http.MethodPost, "/api/auth/register", "", `{"name":"Ann","email":"ann@example.com","password":"long-enough-pw"}`))
-	otherDevice := tokenFrom(t, call(r, http.MethodPost, "/api/auth/login", "", `{"email":"ann@example.com","password":"long-enough-pw"}`))
+	token := tokenFrom(t, call(r, http.MethodPost, "/api/auth/register", "", `{"name":"Ann","email":"ann@example.com","password":"long-enough-pw","turnstileToken":"t"}`))
+	otherDevice := tokenFrom(t, call(r, http.MethodPost, "/api/auth/login", "", `{"email":"ann@example.com","password":"long-enough-pw","turnstileToken":"t"}`))
 
 	w := call(r, http.MethodPut, "/api/me", token, `{"oldPassword":"long-enough-pw","newPassword":"another-long-pw"}`)
 	if w.Code != http.StatusOK {
@@ -116,7 +122,7 @@ func TestTokenRejectedAfterPasswordChange(t *testing.T) {
 
 func TestPlanRouteIsNotShadowedByTaskID(t *testing.T) {
 	r := newAppRouter(t)
-	token := tokenFrom(t, call(r, http.MethodPost, "/api/auth/register", "", `{"name":"Ann","email":"ann@example.com","password":"long-enough-pw"}`))
+	token := tokenFrom(t, call(r, http.MethodPost, "/api/auth/register", "", `{"name":"Ann","email":"ann@example.com","password":"long-enough-pw","turnstileToken":"t"}`))
 	w := call(r, http.MethodPut, "/api/tasks/plan", token,
 		`{"weekStart":"2026-11-02","tasks":[{"name":"Deep Work","category":"deep-work","startTime":"09:00","endTime":"10:00","energy":3,"date":"2026-11-02"}]}`)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"planId"`) {

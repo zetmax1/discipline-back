@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -56,32 +58,48 @@ func loginBody(email, password string) string {
 	return `{"email":"` + email + `","password":"` + password + `"}`
 }
 
-func TestLogin_LocksEmailAfterFiveFailures(t *testing.T) {
+func loginBodyWithCaptcha(email, password, token string) string {
+	return `{"email":"` + email + `","password":"` + password + `","turnstileToken":"` + token + `"}`
+}
+
+// fakeVerifier accepts the token "ok"; err simulates Cloudflare being unreachable.
+type fakeVerifier struct {
+	err   error
+	calls int
+}
+
+func (f *fakeVerifier) Verify(_ context.Context, token string) (bool, error) {
+	f.calls++
+	if f.err != nil {
+		return false, f.err
+	}
+	return token == "ok", nil
+}
+
+func newLoginEnv() (*fakeAuthService, *fakeVerifier, *gin.Engine) {
 	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
-	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(ratelimit.NewMemoryStore())))
+	v := &fakeVerifier{}
+	return svc, v, authRouter(NewAuthHandler(svc, services.NewLoginThrottle(ratelimit.NewMemoryStore()), v))
+}
 
-	for i := 0; i < 5; i++ {
-		w := doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "wrong"))
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("attempt %d: expected 401, got %d", i+1, w.Code)
-		}
-	}
-	callsBefore := svc.loginCalls
-	w := doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "correct-password"))
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("locked email must get 429 even with the right password, got %d", w.Code)
-	}
-	if w.Header().Get("Retry-After") == "" {
-		t.Fatal("429 must include Retry-After")
-	}
-	if svc.loginCalls != callsBefore {
-		t.Fatal("a locked email must not reach the password check")
-	}
+func loginFrom(r http.Handler, ip, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(body))
+	req.RemoteAddr = ip + ":1000"
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
 
-	other := doRequest(r, http.MethodPost, "/auth/login", loginBody("other@example.com", "x"))
-	if other.Code != http.StatusUnauthorized {
-		t.Fatalf("other emails must not be locked, got %d", other.Code)
+func captchaRequired(t *testing.T, w *httptest.ResponseRecorder) bool {
+	t.Helper()
+	var body struct {
+		CaptchaRequired *bool `json:"captchaRequired"`
 	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.CaptchaRequired == nil {
+		t.Fatalf("response must carry captchaRequired: %d %s", w.Code, w.Body.String())
+	}
+	return *body.CaptchaRequired
 }
 
 // downStore fails every call, like an unreachable Redis.
@@ -101,7 +119,7 @@ func (downStore) Ping(context.Context) error          { return errStoreDown }
 
 func TestLogin_ThrottleStoreDownIs503(t *testing.T) {
 	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
-	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(downStore{})))
+	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(downStore{}), &fakeVerifier{}))
 	w := doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "correct-password"))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("login must fail closed while the throttle store is down, got %d", w.Code)
@@ -111,51 +129,147 @@ func TestLogin_ThrottleStoreDownIs503(t *testing.T) {
 	}
 }
 
-func TestLogin_UnknownEmailIsThrottledToo(t *testing.T) {
-	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
-	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(ratelimit.NewMemoryStore())))
-	for i := 0; i < 5; i++ {
-		doRequest(r, http.MethodPost, "/auth/login", loginBody("ghost@example.com", "x"))
+func TestLogin_NoHardLockoutForTheOwner(t *testing.T) {
+	_, _, r := newLoginEnv()
+	for i := 0; i < 10; i++ { // attacker on one IP
+		loginFrom(r, "203.0.113.66", loginBodyWithCaptcha("user@example.com", "wrong", "ok"))
 	}
-	w := doRequest(r, http.MethodPost, "/auth/login", loginBody("ghost@example.com", "x"))
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("lockout must behave the same for unknown emails, got %d", w.Code)
+	w := loginFrom(r, "198.51.100.5", loginBodyWithCaptcha("user@example.com", "correct-password", "ok"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the owner on another IP must still log in (with a captcha), got %d %s", w.Code, w.Body.String())
 	}
 }
 
-func TestLogin_SuccessResetsFailures(t *testing.T) {
-	svc := &fakeAuthService{email: "user@example.com", password: "correct-password"}
-	r := authRouter(NewAuthHandler(svc, services.NewLoginThrottle(ratelimit.NewMemoryStore())))
-	for i := 0; i < 4; i++ {
-		doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "wrong"))
+func TestLogin_CaptchaRequiredAfterThreeFailures(t *testing.T) {
+	svc, v, r := newLoginEnv()
+	for i := 0; i < 3; i++ {
+		w := loginFrom(r, "203.0.113.1", loginBody("user@example.com", "wrong"))
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: expected 401, got %d", i+1, w.Code)
+		}
+		if got, want := captchaRequired(t, w), i == 2; got != want {
+			t.Fatalf("attempt %d: captchaRequired=%v, want %v", i+1, got, want)
+		}
 	}
-	if w := doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "correct-password")); w.Code != http.StatusOK {
+	if v.calls != 0 {
+		t.Fatal("no captcha check before it is required")
+	}
+
+	calls := svc.loginCalls
+	w := loginFrom(r, "198.51.100.5", loginBody("user@example.com", "correct-password"))
+	if w.Code != http.StatusUnauthorized || !captchaRequired(t, w) {
+		t.Fatalf("missing token must be 401 captchaRequired, got %d %s", w.Code, w.Body.String())
+	}
+	w = loginFrom(r, "198.51.100.5", loginBodyWithCaptcha("user@example.com", "correct-password", "forged"))
+	if w.Code != http.StatusUnauthorized || !captchaRequired(t, w) {
+		t.Fatalf("invalid token must be 401 captchaRequired, got %d", w.Code)
+	}
+	if svc.loginCalls != calls {
+		t.Fatal("without a valid captcha the password must not be checked")
+	}
+	if w := loginFrom(r, "198.51.100.5", loginBodyWithCaptcha("user@example.com", "correct-password", "ok")); w.Code != http.StatusOK {
+		t.Fatalf("valid captcha + right password must log in, got %d", w.Code)
+	}
+}
+
+func TestLogin_UnknownEmailIsTreatedTheSame(t *testing.T) {
+	_, _, r := newLoginEnv()
+	for i := 0; i < 3; i++ {
+		loginFrom(r, "203.0.113.1", loginBody("ghost@example.com", "x"))
+	}
+	if w := loginFrom(r, "203.0.113.2", loginBody("ghost@example.com", "x")); w.Code != http.StatusUnauthorized || !captchaRequired(t, w) {
+		t.Fatalf("unknown emails must need a captcha too, got %d", w.Code)
+	}
+}
+
+func TestLogin_ProgressiveDelayIs429WithRetryAfter(t *testing.T) {
+	svc, _, r := newLoginEnv()
+	for i := 0; i < 4; i++ {
+		loginFrom(r, "203.0.113.1", loginBodyWithCaptcha("user@example.com", "wrong", "ok"))
+	}
+	calls := svc.loginCalls
+	w := loginFrom(r, "203.0.113.1", loginBodyWithCaptcha("user@example.com", "correct-password", "ok"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("after the 4th failure the same (email, IP) must wait, got %d", w.Code)
+	}
+	if ra := w.Header().Get("Retry-After"); ra != "2" {
+		t.Fatalf("Retry-After must be 2 seconds after the 4th failure, got %q", ra)
+	}
+	if svc.loginCalls != calls {
+		t.Fatal("a delayed attempt must not reach the password check")
+	}
+}
+
+func TestLogin_SuccessClearsTheDelay(t *testing.T) {
+	_, _, r := newLoginEnv()
+	for i := 0; i < 3; i++ {
+		loginFrom(r, "203.0.113.1", loginBodyWithCaptcha("user@example.com", "wrong", "ok"))
+	}
+	if w := loginFrom(r, "203.0.113.1", loginBodyWithCaptcha("user@example.com", "correct-password", "ok")); w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	for i := 0; i < 4; i++ {
-		doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "wrong"))
+	for i := 0; i < 3; i++ {
+		loginFrom(r, "203.0.113.1", loginBodyWithCaptcha("user@example.com", "wrong", "ok"))
 	}
-	if w := doRequest(r, http.MethodPost, "/auth/login", loginBody("user@example.com", "correct-password")); w.Code != http.StatusOK {
-		t.Fatalf("counter should have been reset by the earlier success, got %d", w.Code)
+	if w := loginFrom(r, "203.0.113.1", loginBodyWithCaptcha("user@example.com", "correct-password", "ok")); w.Code != http.StatusOK {
+		t.Fatalf("the earlier success must have cleared the (email, IP) count, got %d", w.Code)
+	}
+}
+
+func TestLogin_CaptchaServiceDownIs503(t *testing.T) {
+	svc, v, r := newLoginEnv()
+	for i := 0; i < 3; i++ {
+		loginFrom(r, "203.0.113.1", loginBody("user@example.com", "wrong"))
+	}
+	v.err = errors.New("cloudflare unreachable")
+	calls := svc.loginCalls
+	if w := loginFrom(r, "203.0.113.1", loginBodyWithCaptcha("user@example.com", "correct-password", "ok")); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("an unverifiable captcha must fail closed with 503, got %d", w.Code)
+	}
+	if svc.loginCalls != calls {
+		t.Fatal("no password check without a verified captcha")
+	}
+}
+
+func TestRegister_RequiresAValidCaptcha(t *testing.T) {
+	v := &fakeVerifier{}
+	r := authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef"),
+		services.NewLoginThrottle(ratelimit.NewMemoryStore()), v))
+	for _, body := range []string{
+		`{"name":"Ann","email":"ann@example.com","password":"1234567890"}`,
+		`{"name":"Ann","email":"ann@example.com","password":"1234567890","turnstileToken":"forged"}`,
+	} {
+		w := doRequest(r, http.MethodPost, "/auth/register", body)
+		if w.Code != http.StatusBadRequest || !captchaRequired(t, w) {
+			t.Fatalf("registration without a valid captcha must be 400 captchaRequired, got %d %s", w.Code, w.Body.String())
+		}
+	}
+	v.err = errors.New("cloudflare unreachable")
+	if w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890","turnstileToken":"ok"}`); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("an unverifiable captcha must fail closed with 503, got %d", w.Code)
+	}
+	v.err = nil
+	if w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890","turnstileToken":"ok"}`); w.Code != http.StatusCreated {
+		t.Fatalf("valid captcha must register, got %d %s", w.Code, w.Body.String())
 	}
 }
 
 func realAuthRouter(t *testing.T) *gin.Engine {
 	t.Helper()
-	return authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef"), services.NewLoginThrottle(ratelimit.NewMemoryStore())))
+	return authRouter(NewAuthHandler(services.NewAuthService(newHandlerUserRepo(), "jwt-secret-for-tests-0123456789abcdef"), services.NewLoginThrottle(ratelimit.NewMemoryStore()), &fakeVerifier{}))
 }
 
 func TestRegister_WeakPasswordIs400AndDuplicateIs409(t *testing.T) {
 	r := realAuthRouter(t)
-	w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"123456789"}`)
+	w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"123456789","turnstileToken":"ok"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("weak password must be 400, got %d: %s", w.Code, w.Body.String())
 	}
-	w = doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	w = doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890","turnstileToken":"ok"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	w = doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	w = doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890","turnstileToken":"ok"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("duplicate email must stay 409, got %d", w.Code)
 	}
@@ -163,7 +277,7 @@ func TestRegister_WeakPasswordIs400AndDuplicateIs409(t *testing.T) {
 
 func TestUpdateProfile_WeakNewPasswordIs400(t *testing.T) {
 	r := realAuthRouter(t)
-	doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890","turnstileToken":"ok"}`)
 	w := doRequest(r, http.MethodPut, "/me", `{"oldPassword":"1234567890","newPassword":"short"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
@@ -172,7 +286,7 @@ func TestUpdateProfile_WeakNewPasswordIs400(t *testing.T) {
 
 func registerAnn(t *testing.T, r *gin.Engine) {
 	t.Helper()
-	w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890"}`)
+	w := doRequest(r, http.MethodPost, "/auth/register", `{"name":"Ann","email":"ann@example.com","password":"1234567890","turnstileToken":"ok"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("setup register failed: %d %s", w.Code, w.Body.String())
 	}

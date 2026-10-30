@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"discipline-backend/internal/captcha"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/services"
 )
@@ -17,11 +18,12 @@ import (
 type AuthHandler struct {
 	authService   services.AuthService
 	loginThrottle *services.LoginThrottle
+	captcha       captcha.Verifier
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(authService services.AuthService, loginThrottle *services.LoginThrottle) *AuthHandler {
-	return &AuthHandler{authService: authService, loginThrottle: loginThrottle}
+func NewAuthHandler(authService services.AuthService, loginThrottle *services.LoginThrottle, verifier captcha.Verifier) *AuthHandler {
+	return &AuthHandler{authService: authService, loginThrottle: loginThrottle, captcha: verifier}
 }
 
 // --- Request / Response types ---
@@ -31,12 +33,23 @@ type RegisterRequest struct {
 	Name     string `json:"name" binding:"required,min=2,max=100" example:"John Doe"`
 	Email    string `json:"email" binding:"required,email" example:"john@example.com"`
 	Password string `json:"password" binding:"required" example:"securepass123"` // policy: 10+ chars, max 72 bytes
+	// TurnstileToken is required on public registration (not on admin registration).
+	TurnstileToken string `json:"turnstileToken,omitempty" binding:"max=2048" example:"0.turnstile-token"`
 }
 
 // LoginRequest is the expected JSON body for login.
 type LoginRequest struct {
 	Email    string `json:"email" binding:"required,email" example:"john@example.com"`
 	Password string `json:"password" binding:"required" example:"securepass123"`
+	// TurnstileToken is required once the email has 3 failed logins in 15 minutes.
+	TurnstileToken string `json:"turnstileToken,omitempty" binding:"max=2048" example:"0.turnstile-token"`
+}
+
+// LoginErrorResponse is a 401 from login; captchaRequired tells the client to
+// send a Turnstile token with the next attempt.
+type LoginErrorResponse struct {
+	Error           string `json:"error" example:"invalid email or password"`
+	CaptchaRequired bool   `json:"captchaRequired" example:"false"`
 }
 
 // AuthResponse is the response for successful auth operations.
@@ -70,6 +83,11 @@ func respondRegisterError(c *gin.Context, err error) {
 	}
 }
 
+// respondUnavailable answers 503 when a protection (throttle store, captcha check) cannot run.
+func respondUnavailable(c *gin.Context) {
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service temporarily unavailable. Please try again shortly."})
+}
+
 // --- Handlers ---
 
 // Register godoc
@@ -82,6 +100,7 @@ func respondRegisterError(c *gin.Context, err error) {
 // @Success      201   {object}  AuthResponse
 // @Failure      400   {object}  ErrorResponse
 // @Failure      409   {object}  ErrorResponse
+// @Failure      503   {object}  ErrorResponse
 // @Router       /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
@@ -90,6 +109,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			"error":   "Validation failed",
 			"details": err.Error(),
 		})
+		return
+	}
+
+	ok, err := h.captcha.Verify(c.Request.Context(), req.TurnstileToken)
+	if err != nil {
+		log.Printf("captcha verification unavailable: %v", err)
+		respondUnavailable(c)
+		return
+	}
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Please complete the verification.", "captchaRequired": true})
 		return
 	}
 
@@ -108,14 +138,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 // Login godoc
 // @Summary      Login
-// @Description  Authenticates a user and returns a JWT token
+// @Description  Authenticates a user and returns a JWT token. Failures are throttled per (email, IP) with a progressive delay (429 + Retry-After) and per IP; after 3 failures for an email within 15 minutes, a Turnstile token is required (401 with captchaRequired).
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
 // @Param        body  body      LoginRequest  true  "Login credentials"
 // @Success      200   {object}  AuthResponse
 // @Failure      400   {object}  ErrorResponse
-// @Failure      401   {object}  ErrorResponse
+// @Failure      401   {object}  LoginErrorResponse
 // @Failure      429   {object}  ErrorResponse
 // @Failure      503   {object}  ErrorResponse
 // @Router       /auth/login [post]
@@ -130,30 +160,43 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	locked, retryAfter, err := h.loginThrottle.Locked(ctx, req.Email)
+	ip := c.ClientIP()
+	state, err := h.loginThrottle.Check(ctx, req.Email, ip)
 	if err != nil {
-		// Fail closed: without the shared failure count there is no brute-force protection.
+		// Fail closed: without the shared failure counts there is no brute-force protection.
 		log.Printf("login throttle unavailable: %v", err)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service temporarily unavailable. Please try again shortly."})
+		respondUnavailable(c)
 		return
 	}
-	if locked {
-		c.Header("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+	if state.RetryAfter > 0 {
+		c.Header("Retry-After", strconv.Itoa(max(1, int(math.Ceil(state.RetryAfter.Seconds())))))
 		c.JSON(http.StatusTooManyRequests, gin.H{
 			"error": "Too many failed login attempts. Please try again later.",
 		})
 		return
 	}
+	if state.CaptchaRequired {
+		ok, err := h.captcha.Verify(ctx, req.TurnstileToken)
+		if err != nil {
+			log.Printf("captcha verification unavailable: %v", err)
+			respondUnavailable(c)
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusUnauthorized, LoginErrorResponse{Error: "Please complete the verification.", CaptchaRequired: true})
+			return
+		}
+	}
 
 	user, token, err := h.authService.Login(req.Email, req.Password)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidCredentials) {
-			if err := h.loginThrottle.RecordFailure(ctx, req.Email); err != nil {
-				log.Printf("login throttle: record failure: %v", err)
+			captchaNext, recErr := h.loginThrottle.RecordFailure(ctx, req.Email, ip)
+			if recErr != nil {
+				log.Printf("login throttle: record failure: %v", recErr)
+				captchaNext = state.CaptchaRequired
 			}
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": err.Error(),
-			})
+			c.JSON(http.StatusUnauthorized, LoginErrorResponse{Error: err.Error(), CaptchaRequired: captchaNext})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -161,8 +204,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		})
 		return
 	}
-	if err := h.loginThrottle.Reset(ctx, req.Email); err != nil {
-		log.Printf("login throttle: reset: %v", err)
+	if err := h.loginThrottle.RecordSuccess(ctx, req.Email, ip); err != nil {
+		log.Printf("login throttle: record success: %v", err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

@@ -10,6 +10,7 @@ import (
 
 	"discipline-backend/config"
 	_ "discipline-backend/docs" // Swagger generated docs
+	"discipline-backend/internal/captcha"
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/repositories"
@@ -49,7 +50,7 @@ func main() {
 	// Auth
 	userRepo := repositories.NewUserRepository(db)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
-	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(limits))
+	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(limits), captcha.NewTurnstile(cfg.TurnstileSecret))
 
 	// Tasks
 	taskRepo := repositories.NewTaskRepository(db)

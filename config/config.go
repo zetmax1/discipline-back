@@ -37,6 +37,8 @@ type Config struct {
 	EnableDocs bool
 	// EnableIPDebug serves GET /debug/ip when ENABLE_IP_DEBUG=true (staging only).
 	EnableIPDebug bool
+	// TurnstileSecret verifies Cloudflare Turnstile tokens on registration and throttled logins.
+	TurnstileSecret string
 	// RedisURL holds the shared rate-limit and login-throttle state (redis:// or rediss://).
 	RedisURL string
 }
@@ -78,6 +80,7 @@ func Load() (*Config, error) {
 	}
 	pythonServiceURL := requireEnv("PYTHON_SERVICE_URL", &problems)
 	redisURL := requireEnv("REDIS_URL", &problems)
+	turnstileSecret := requireEnv("TURNSTILE_SECRET", &problems)
 	if redisURL != "" {
 		if _, err := redis.ParseURL(redisURL); err != nil {
 			problems = append(problems, "REDIS_URL must be a redis:// or rediss:// URL")
@@ -118,6 +121,7 @@ func Load() (*Config, error) {
 		EnableDocs:        strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_DOCS")), "true"),
 		EnableIPDebug:     strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_IP_DEBUG")), "true"),
 		RedisURL:          redisURL,
+		TurnstileSecret:   turnstileSecret,
 	}, nil
 }
 
