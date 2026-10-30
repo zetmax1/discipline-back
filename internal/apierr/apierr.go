@@ -56,6 +56,7 @@ const (
 	SessionInvalid          Code = "session_invalid"
 	SessionActive           Code = "session_active"
 	ParkingNoteInvalid      Code = "parking_note_invalid"
+	ShutdownInvalid         Code = "shutdown_invalid"
 
 	WordNotFound  Code = "word_not_found"
 	WordIDInvalid Code = "word_id_invalid"
@@ -75,7 +76,7 @@ var All = []Code{
 	InvalidTimezone, TaskNotFound, TaskIDInvalid, TaskNameLength, TaskDateInvalid, TaskTimeInvalid, TaskEndBeforeStart,
 	TaskCategoryInvalid, TaskEnergyInvalid, TaskStatusInvalid, TaskDistractionsInvalid, TaskOverlap, PlanWeekInvalid,
 	TaskFocusRatingInvalid, TaskNoteTooLong, TaskNotMovable, IdempotencyKeyRequired,
-	CheckinInvalid, SessionInvalid, SessionActive, ParkingNoteInvalid,
+	CheckinInvalid, SessionInvalid, SessionActive, ParkingNoteInvalid, ShutdownInvalid,
 	WordNotFound, WordIDInvalid, DateInvalid, RangeInvalid, DaysInvalid, AnalyticsUnavailable, AnalyticsValidationFailed,
 }
 

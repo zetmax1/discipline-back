@@ -13,6 +13,7 @@ import (
 	_ "discipline-backend/docs" // Swagger generated docs
 	"discipline-backend/internal/captcha"
 	"discipline-backend/internal/errtrack"
+	"discipline-backend/internal/events"
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/logging"
 	"discipline-backend/internal/middleware"
@@ -67,7 +68,7 @@ func main() {
 
 	// Tasks
 	taskRepo := repositories.NewTaskRepository(db)
-	taskService := services.NewTaskService(taskRepo)
+	taskService := services.NewTaskServiceWithEvents(taskRepo, events.NewRecorder(db))
 	taskHandler := handlers.NewTaskHandler(taskService)
 
 	// Quotes
@@ -87,7 +88,7 @@ func main() {
 
 	// Register all routes
 	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, handlers.NewFeatureHandler(cfg.Features),
-		handlers.NewDailyHandler(services.NewDailyService(repositories.NewDailyRepository(db))), cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
+		handlers.NewDailyHandler(services.NewDailyService(repositories.NewDailyRepository(db), events.NewRecorder(db))), cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
 	routes.SetupIPDebug(r, cfg.EnableIPDebug)
 	sqlDB, err := db.DB()
 	if err != nil {

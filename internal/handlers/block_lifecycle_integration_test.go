@@ -126,3 +126,20 @@ func TestMove_CreatesTheNewBlockOnceAndFreesTheOldSlot(t *testing.T) {
 		t.Fatalf("moving a moved block: want 409, got %d", w.Code)
 	}
 }
+
+func TestBlockEvents(t *testing.T) {
+	e := newTaskEnv(t)
+	_, id := e.create(t, taskJSON("A", "09:00", "10:00", "2026-10-29"))
+	doRequest(e.r, http.MethodPut, fmt.Sprintf("/tasks/%d", id), `{"status":"in_progress"}`)
+	doRequest(e.r, http.MethodPut, fmt.Sprintf("/tasks/%d", id), `{"name":"renamed"}`) // not a status change
+	doRequest(e.r, http.MethodPost, fmt.Sprintf("/tasks/%d/check-in", id), `{"status":"done","focusRating":4}`)
+	_, b := e.create(t, taskJSON("B", "11:00", "12:00", "2026-10-29"))
+	doRequestWithKey(e, http.MethodPost, fmt.Sprintf("/tasks/%d/move", b), `{"date":"2026-10-30","startMin":540,"endMin":600}`, "move-b-0001")
+	doRequestWithKey(e, http.MethodPost, fmt.Sprintf("/tasks/%d/move", b), `{"date":"2026-10-30","startMin":540,"endMin":600}`, "move-b-0001")
+	var names []string
+	e.db.Raw(`SELECT name FROM product_events ORDER BY id`).Scan(&names)
+	want := "block_created,block_status_changed,block_checked_in,block_created,block_moved"
+	if got := strings.Join(names, ","); got != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}

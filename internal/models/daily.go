@@ -49,3 +49,11 @@ type ParkingNote struct {
 }
 
 func (ParkingNote) TableName() string { return "parking_lot" }
+
+// Shutdown closes a local day (evening shutdown, F1).
+type Shutdown struct {
+	UserID   uint `gorm:"primaryKey"`
+	Date     Date `gorm:"type:date;primaryKey"`
+	Win      *string
+	ClosedAt time.Time `gorm:"not null"`
+}

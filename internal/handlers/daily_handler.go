@@ -30,6 +30,8 @@ func RegisterDailyRoutes(g *gin.RouterGroup, h *DailyHandler) {
 	g.PUT("/sessions/:id", h.SaveSession)
 	g.GET("/parking-lot", h.ListParkingNotes)
 	g.PUT("/parking-lot/:id", h.ParkNote)
+	g.GET("/shutdowns/today", h.GetShutdown)
+	g.PUT("/shutdowns/today", h.CloseDay)
 }
 
 // respondDailyError maps coded validation errors to 400, an active session to 409 and anything else to 500.
@@ -309,4 +311,76 @@ func (h *DailyHandler) ListParkingNotes(c *gin.Context) {
 		out.Items = append(out.Items, ParkingNoteView{ID: n.ID, Text: n.Text, SessionID: n.SessionID, CreatedAt: rfc3339(n.CreatedAt)})
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// ShutdownView is a closed day.
+type ShutdownView struct {
+	Date     string  `json:"date" example:"2026-10-30"`
+	Win      *string `json:"win" example:"Finished the essay draft"`
+	ClosedAt string  `json:"closedAt" example:"2026-10-30T16:30:00Z"`
+}
+
+func shutdownView(s *models.Shutdown) *ShutdownView {
+	if s == nil {
+		return nil
+	}
+	return &ShutdownView{Date: string(s.Date), Win: s.Win, ClosedAt: rfc3339(s.ClosedAt)}
+}
+
+// ShutdownTodayResponse is today's local date and its shutdown (null while the day is open).
+type ShutdownTodayResponse struct {
+	Date     string        `json:"date"`
+	Shutdown *ShutdownView `json:"shutdown"`
+}
+
+// ShutdownResponse wraps a shutdown.
+type ShutdownResponse struct {
+	Shutdown *ShutdownView `json:"shutdown"`
+}
+
+// ShutdownRequest closes the day with one win (optional, up to 280 characters).
+type ShutdownRequest struct {
+	Win string `json:"win" example:"Finished the essay draft"`
+}
+
+// GetShutdown godoc
+// @Summary      Today's evening shutdown
+// @Tags         Daily
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  ShutdownTodayResponse
+// @Router       /shutdowns/today [get]
+func (h *DailyHandler) GetShutdown(c *gin.Context) {
+	today := userToday(c)
+	s, err := h.daily.GetShutdown(c.MustGet("userID").(uint), models.Date(today))
+	if err != nil {
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to load the shutdown")
+		return
+	}
+	c.JSON(http.StatusOK, ShutdownTodayResponse{Date: today, Shutdown: shutdownView(s)})
+}
+
+// CloseDay godoc
+// @Summary      Close today (evening shutdown)
+// @Description  Marks the user's local day closed with one win. Sending it again keeps the first close time.
+// @Tags         Daily
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      ShutdownRequest  true  "Shutdown"
+// @Success      200   {object}  ShutdownResponse
+// @Failure      400   {object}  ErrorResponse
+// @Router       /shutdowns/today [put]
+func (h *DailyHandler) CloseDay(c *gin.Context) {
+	var req ShutdownRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
+		return
+	}
+	s, err := h.daily.CloseDay(c.MustGet("userID").(uint), models.Date(userToday(c)), nowFunc(), req.Win)
+	if err != nil {
+		respondDailyError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, ShutdownResponse{Shutdown: shutdownView(s)})
 }

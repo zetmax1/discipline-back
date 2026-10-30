@@ -335,6 +335,36 @@ definitions:
         example: "2026-10-30T04:00:00Z"
         type: string
     type: object
+  handlers.ShutdownRequest:
+    properties:
+      win:
+        example: Finished the essay draft
+        type: string
+    type: object
+  handlers.ShutdownResponse:
+    properties:
+      shutdown:
+        $ref: '#/definitions/handlers.ShutdownView'
+    type: object
+  handlers.ShutdownTodayResponse:
+    properties:
+      date:
+        type: string
+      shutdown:
+        $ref: '#/definitions/handlers.ShutdownView'
+    type: object
+  handlers.ShutdownView:
+    properties:
+      closedAt:
+        example: "2026-10-30T16:30:00Z"
+        type: string
+      date:
+        example: "2026-10-30"
+        type: string
+      win:
+        example: Finished the essay draft
+        type: string
+    type: object
   handlers.SleepDefaults:
     properties:
       sleepEndMin:
@@ -990,6 +1020,48 @@ paths:
       security:
       - BearerAuth: []
       summary: The running focus session
+      tags:
+      - Daily
+  /shutdowns/today:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ShutdownTodayResponse'
+      security:
+      - BearerAuth: []
+      summary: Today's evening shutdown
+      tags:
+      - Daily
+    put:
+      consumes:
+      - application/json
+      description: Marks the user's local day closed with one win. Sending it again
+        keeps the first close time.
+      parameters:
+      - description: Shutdown
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ShutdownRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ShutdownResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Close today (evening shutdown)
       tags:
       - Daily
   /tasks:

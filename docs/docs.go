@@ -781,6 +781,73 @@ const docTemplate = `{
                 }
             }
         },
+        "/shutdowns/today": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Today's evening shutdown",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ShutdownTodayResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks the user's local day closed with one win. Sending it again keeps the first close time.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Close today (evening shutdown)",
+                "parameters": [
+                    {
+                        "description": "Shutdown",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ShutdownRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ShutdownResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/tasks": {
             "get": {
                 "security": [
@@ -1903,6 +1970,51 @@ const docTemplate = `{
                 "startedAt": {
                     "type": "string",
                     "example": "2026-10-30T04:00:00Z"
+                }
+            }
+        },
+        "handlers.ShutdownRequest": {
+            "type": "object",
+            "properties": {
+                "win": {
+                    "type": "string",
+                    "example": "Finished the essay draft"
+                }
+            }
+        },
+        "handlers.ShutdownResponse": {
+            "type": "object",
+            "properties": {
+                "shutdown": {
+                    "$ref": "#/definitions/handlers.ShutdownView"
+                }
+            }
+        },
+        "handlers.ShutdownTodayResponse": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "shutdown": {
+                    "$ref": "#/definitions/handlers.ShutdownView"
+                }
+            }
+        },
+        "handlers.ShutdownView": {
+            "type": "object",
+            "properties": {
+                "closedAt": {
+                    "type": "string",
+                    "example": "2026-10-30T16:30:00Z"
+                },
+                "date": {
+                    "type": "string",
+                    "example": "2026-10-30"
+                },
+                "win": {
+                    "type": "string",
+                    "example": "Finished the essay draft"
                 }
             }
         },

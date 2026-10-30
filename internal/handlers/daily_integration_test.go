@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,8 +10,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"discipline-backend/internal/contracttest"
+	"discipline-backend/internal/events"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/services"
@@ -20,6 +23,7 @@ import (
 // dailyEnv is one user with a time zone, and the daily-loop routes (check-ins, sessions, shutdown).
 type dailyEnv struct {
 	r      *gin.Engine
+	db     *gorm.DB
 	userID uint
 }
 
@@ -36,8 +40,8 @@ func newDailyEnv(t *testing.T, tz string) *dailyEnv {
 		c.Set("userID", u.ID)
 		c.Set("userTimezone", tz)
 	})
-	RegisterDailyRoutes(r.Group(""), NewDailyHandler(services.NewDailyService(repositories.NewDailyRepository(gdb))))
-	return &dailyEnv{r: r, userID: u.ID}
+	RegisterDailyRoutes(r.Group(""), NewDailyHandler(services.NewDailyService(repositories.NewDailyRepository(gdb), events.NewRecorder(gdb))))
+	return &dailyEnv{r: r, db: gdb, userID: u.ID}
 }
 
 // at freezes the clock at a wall-clock time in tz for the rest of the test.
@@ -260,5 +264,87 @@ func TestParkingLot_NoteIsStoredOnce(t *testing.T) {
 	}
 	if code, _ := e.call(t, http.MethodPut, "/parking-lot/0f8fad5b-d9cb-469f-a165-70867728950f", `{"text":"  "}`); code != http.StatusBadRequest {
 		t.Fatalf("an empty note is rejected, got %d", code)
+	}
+}
+
+func TestShutdown_ClosesTheLocalDayOnce(t *testing.T) {
+	const tz = "Asia/Tashkent"
+	e := newDailyEnv(t, tz)
+	at(t, tz, "2026-10-30 21:30")
+	code, body := e.call(t, http.MethodGet, "/shutdowns/today", "")
+	if code != http.StatusOK || body["shutdown"] != nil || body["date"] != "2026-10-30" {
+		t.Fatalf("open day: %d %v", code, body)
+	}
+	for range 2 {
+		code, body = e.call(t, http.MethodPut, "/shutdowns/today", `{"win":"Finished the essay draft"}`)
+		if code != http.StatusOK {
+			t.Fatalf("shutdown: %d %v", code, body)
+		}
+	}
+	raw, _ := json.Marshal(body)
+	contracttest.Validate(t, "daily", "shutdown_response", raw)
+	s := body["shutdown"].(map[string]any)
+	if s["date"] != "2026-10-30" || s["win"] != "Finished the essay draft" || s["closedAt"] != "2026-10-30T16:30:00Z" {
+		t.Fatalf("unexpected %v", s)
+	}
+	_, body = e.call(t, http.MethodGet, "/shutdowns/today", "")
+	if body["shutdown"] == nil {
+		t.Fatal("the day stays closed")
+	}
+	raw, _ = json.Marshal(body)
+	contracttest.Validate(t, "daily", "shutdown_today", raw)
+	if code, out := e.call(t, http.MethodPut, "/shutdowns/today", `{"win":"`+strings.Repeat("x", 281)+`"}`); code != http.StatusBadRequest || out["code"] != "shutdown_invalid" {
+		t.Fatalf("a win is at most 280 characters, got %d %v", code, out)
+	}
+}
+
+func TestFocusSession_StartingInABlockMarksItInProgress(t *testing.T) {
+	const tz = "UTC"
+	e := newDailyEnv(t, tz)
+	at(t, tz, "2026-10-30 09:00")
+	gdb := e.db
+	block := &models.Task{UserID: e.userID, Name: "Essay", Category: "study", StartTime: "09:00", EndTime: "10:00", Date: "2026-10-30", Energy: 3}
+	if err := gdb.Create(block).Error; err != nil {
+		t.Fatal(err)
+	}
+	if code, out := e.call(t, http.MethodPut, "/sessions/"+sessionA, fmt.Sprintf(`{"blockId":%d,"plannedMinutes":50,"breakMinutes":10}`, block.ID)); code != http.StatusOK {
+		t.Fatalf("start: %d %v", code, out)
+	}
+	var stored models.Task
+	gdb.First(&stored, block.ID)
+	if stored.Status != models.StatusInProgress {
+		t.Fatalf("the block is in progress once a session starts in it, got %s", stored.Status)
+	}
+}
+
+func eventNames(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+	var names []string
+	if err := db.Raw(`SELECT name FROM product_events ORDER BY id`).Scan(&names).Error; err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
+func TestDailyLoopEvents_AreWrittenOnceEvenWhenRequestsAreReplayed(t *testing.T) {
+	const tz = "UTC"
+	e := newDailyEnv(t, tz)
+	at(t, tz, "2026-10-30 09:00")
+	for range 2 {
+		e.call(t, http.MethodPut, "/checkins/today", `{"sleepStartMin":1380,"sleepEndMin":420,"sleepQuality":4,"energy":4}`)
+		e.call(t, http.MethodPut, "/sessions/"+sessionA, `{"plannedMinutes":25,"breakMinutes":5}`)
+		e.call(t, http.MethodPut, "/sessions/"+sessionA, `{"plannedMinutes":25,"breakMinutes":5,"distractions":1}`)
+		e.call(t, http.MethodPut, "/sessions/"+sessionA, `{"plannedMinutes":25,"breakMinutes":5,"distractions":1,"endedAt":"2026-10-30T09:25:00Z","outcome":"completed"}`)
+		e.call(t, http.MethodPut, "/shutdowns/today", `{"win":"x"}`)
+	}
+	got := strings.Join(eventNames(t, e.db), ",")
+	want := "checkin_morning_done,session_started,distraction_logged,session_completed,shutdown_done"
+	if got != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+	var props string
+	e.db.Raw(`SELECT props::text FROM product_events WHERE name = 'session_completed'`).Scan(&props)
+	if !strings.Contains(props, `"planned_minutes": 25`) || strings.Contains(props, "@") {
+		t.Fatalf("props carry facts, never personal data: %s", props)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"discipline-backend/internal/events"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/services"
@@ -56,7 +57,7 @@ func newTaskEnv(t *testing.T) *taskEnv {
 		}
 		env.ids[i] = u.ID
 	}
-	h := NewTaskHandler(services.NewTaskService(repositories.NewTaskRepository(gdb)))
+	h := NewTaskHandler(services.NewTaskServiceWithEvents(repositories.NewTaskRepository(gdb), events.NewRecorder(gdb)))
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {

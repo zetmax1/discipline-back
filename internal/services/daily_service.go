@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"discipline-backend/internal/apierr"
+	"discipline-backend/internal/events"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
 )
@@ -49,7 +50,15 @@ type DailyService interface {
 	SessionsOn(userID uint, date string, loc *time.Location, now time.Time) ([]models.FocusSession, error)
 	ParkNote(userID uint, id string, text string, sessionID *string) error
 	ParkingNotes(userID uint) ([]models.ParkingNote, error)
+
+	GetShutdown(userID uint, today models.Date) (*models.Shutdown, error)
+	CloseDay(userID uint, today models.Date, now time.Time, win string) (*models.Shutdown, error)
 }
+
+// ErrInvalidShutdown is wrapped by shutdown validation failures.
+var ErrInvalidShutdown = errors.New("invalid shutdown")
+
+const maxWinChars = 280
 
 // Session validation errors.
 var (
@@ -84,11 +93,13 @@ func invalidSession(msg string) error {
 }
 
 type dailyService struct {
-	repo repositories.DailyRepository
+	repo   repositories.DailyRepository
+	events events.Recorder
 }
 
-func NewDailyService(repo repositories.DailyRepository) DailyService {
-	return &dailyService{repo: repo}
+// NewDailyService records product events with rec (events.Noop{} for none).
+func NewDailyService(repo repositories.DailyRepository, rec events.Recorder) DailyService {
+	return &dailyService{repo: repo, events: rec}
 }
 
 func invalidCheckin(msg string) error {
@@ -145,6 +156,10 @@ func (s *dailyService) GetCheckin(userID uint, today models.Date, loc *time.Loca
 func inRange(v *int, lo, hi int) bool { return v != nil && *v >= lo && *v <= hi }
 
 func (s *dailyService) SaveCheckin(userID uint, today models.Date, loc *time.Location, in CheckinInput) (*models.Checkin, error) {
+	earlier, err := s.repo.FindCheckin(userID, today)
+	if err != nil {
+		return nil, err
+	}
 	c := &models.Checkin{UserID: userID, Date: today, Skipped: in.Skipped}
 	if !in.Skipped {
 		switch {
@@ -168,6 +183,9 @@ func (s *dailyService) SaveCheckin(userID uint, today models.Date, loc *time.Loc
 	}
 	if err := s.repo.UpsertCheckin(c); err != nil {
 		return nil, err
+	}
+	if earlier == nil { // the first save of the day; edits and replays are not new check-ins
+		s.events.Record(userID, events.CheckinMorningDone, events.Props{"skipped": c.Skipped})
 	}
 	return withSleepMinutes(c, loc), nil
 }
@@ -204,11 +222,15 @@ func (s *dailyService) SaveSession(userID uint, id string, now time.Time, in Ses
 			return nil, invalidSession("blockId is not one of your blocks")
 		}
 	}
-	return s.repo.SaveSession(userID, id, now, func(existing, other *models.FocusSession) (*models.FocusSession, bool, error) {
+	var started, ended bool
+	var newDistractions int
+	saved, err := s.repo.SaveSession(userID, id, now, func(existing, other *models.FocusSession) (*models.FocusSession, bool, error) {
 		if existing != nil {
 			if existing.EndedAt != nil { // finished sessions don't change; replays are answered as they are
 				return existing, false, nil
 			}
+			newDistractions = max(0, in.Distractions-existing.Distractions)
+			ended = in.EndedAt != nil
 			existing.Distractions = in.Distractions
 			if in.EndedAt != nil {
 				if in.EndedAt.Before(existing.StartedAt) {
@@ -221,18 +243,38 @@ func (s *dailyService) SaveSession(userID uint, id string, now time.Time, in Ses
 		if other != nil && in.EndedAt == nil {
 			return nil, false, ErrSessionConflict
 		}
-		started := now
+		startAt := now
 		if in.StartedAt != nil && !in.StartedAt.After(now.Add(maxClockAhead)) && in.StartedAt.After(now.Add(-maxOfflineAge)) {
-			started = *in.StartedAt
+			startAt = *in.StartedAt
 		}
-		if in.EndedAt != nil && in.EndedAt.Before(started) {
+		if in.EndedAt != nil && in.EndedAt.Before(startAt) {
 			return nil, false, invalidSession("endedAt must not be before the start")
 		}
+		started, ended, newDistractions = true, in.EndedAt != nil, in.Distractions
 		return &models.FocusSession{
-			ID: id, UserID: userID, BlockID: in.BlockID, StartedAt: started, PlannedMinutes: in.PlannedMinutes,
+			ID: id, UserID: userID, BlockID: in.BlockID, StartedAt: startAt, PlannedMinutes: in.PlannedMinutes,
 			BreakMinutes: in.BreakMinutes, Distractions: in.Distractions, EndedAt: in.EndedAt, Outcome: in.Outcome,
 		}, true, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	facts := events.Props{"planned_minutes": saved.PlannedMinutes, "in_block": saved.BlockID != nil}
+	if started {
+		s.events.Record(userID, events.SessionStarted, facts)
+	}
+	if newDistractions > 0 {
+		s.events.Record(userID, events.DistractionLogged, events.Props{"count": newDistractions})
+	}
+	if ended {
+		facts["distractions"] = saved.Distractions
+		name := events.SessionCompleted
+		if saved.Outcome != nil && *saved.Outcome == models.SessionAbandoned {
+			name = events.SessionAbandoned
+		}
+		s.events.Record(userID, name, facts)
+	}
+	return saved, nil
 }
 
 func (s *dailyService) ActiveSession(userID uint, now time.Time) (*models.FocusSession, error) {
@@ -258,4 +300,28 @@ func (s *dailyService) ParkNote(userID uint, id string, text string, sessionID *
 
 func (s *dailyService) ParkingNotes(userID uint) ([]models.ParkingNote, error) {
 	return s.repo.ParkingNotes(userID)
+}
+
+func (s *dailyService) GetShutdown(userID uint, today models.Date) (*models.Shutdown, error) {
+	return s.repo.FindShutdown(userID, today)
+}
+
+func (s *dailyService) CloseDay(userID uint, today models.Date, now time.Time, win string) (*models.Shutdown, error) {
+	win = strings.TrimSpace(win)
+	if utf8.RuneCountInString(win) > maxWinChars {
+		return nil, apierr.Wrap(ErrInvalidShutdown, apierr.ShutdownInvalid, "win must be at most 280 characters")
+	}
+	earlier, err := s.repo.FindShutdown(userID, today)
+	if err != nil {
+		return nil, err
+	}
+	sd := &models.Shutdown{UserID: userID, Date: today, ClosedAt: now}
+	if win != "" {
+		sd.Win = &win
+	}
+	closed, err := s.repo.CloseDay(sd)
+	if err == nil && earlier == nil {
+		s.events.Record(userID, events.ShutdownDone, events.Props{"has_win": win != ""})
+	}
+	return closed, err
 }

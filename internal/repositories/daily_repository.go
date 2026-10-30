@@ -32,6 +32,10 @@ type DailyRepository interface {
 	// AddParkingNote stores a note once (replays with the same id are ignored).
 	AddParkingNote(n *models.ParkingNote) error
 	ParkingNotes(userID uint) ([]models.ParkingNote, error)
+
+	FindShutdown(userID uint, date models.Date) (*models.Shutdown, error)
+	// CloseDay stores the shutdown once; a second call keeps the first close time but updates the win.
+	CloseDay(s *models.Shutdown) (*models.Shutdown, error)
 }
 
 // SessionDecision builds the row to store; create says whether it is new.
@@ -124,6 +128,12 @@ func (r *dailyRepository) SaveSession(userID uint, id string, now time.Time, dec
 			return err
 		}
 		if create {
+			if s.BlockID != nil && s.EndedAt == nil {
+				if err := tx.Model(&models.Task{}).Where("id = ? AND user_id = ? AND status = ?", *s.BlockID, userID, models.StatusPlanned).
+					Update("status", models.StatusInProgress).Error; err != nil {
+					return err
+				}
+			}
 			err = tx.Create(s).Error
 		} else {
 			err = tx.Save(s).Error
@@ -165,4 +175,27 @@ func (r *dailyRepository) ParkingNotes(userID uint) ([]models.ParkingNote, error
 	var out []models.ParkingNote
 	err := r.db.Where("user_id = ?", userID).Order("created_at").Find(&out).Error
 	return out, err
+}
+
+func (r *dailyRepository) FindShutdown(userID uint, date models.Date) (*models.Shutdown, error) {
+	var s models.Shutdown
+	err := r.db.Where("user_id = ? AND date = ?", userID, date).First(&s).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (r *dailyRepository) CloseDay(s *models.Shutdown) (*models.Shutdown, error) {
+	err := r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "date"}},
+		DoUpdates: clause.AssignmentColumns([]string{"win"}),
+	}).Create(s).Error
+	if err != nil {
+		return nil, err
+	}
+	return r.FindShutdown(s.UserID, s.Date)
 }
