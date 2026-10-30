@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -114,7 +114,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	ok, err := h.captcha.Verify(c.Request.Context(), req.TurnstileToken)
 	if err != nil {
-		log.Printf("captcha verification unavailable: %v", err)
+		slog.ErrorContext(c.Request.Context(), "captcha verification unavailable", "error", err)
 		respondUnavailable(c)
 		return
 	}
@@ -164,7 +164,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	state, err := h.loginThrottle.Check(ctx, req.Email, ip)
 	if err != nil {
 		// Fail closed: without the shared failure counts there is no brute-force protection.
-		log.Printf("login throttle unavailable: %v", err)
+		slog.ErrorContext(ctx, "login throttle unavailable", "error", err)
 		respondUnavailable(c)
 		return
 	}
@@ -178,7 +178,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if state.CaptchaRequired {
 		ok, err := h.captcha.Verify(ctx, req.TurnstileToken)
 		if err != nil {
-			log.Printf("captcha verification unavailable: %v", err)
+			slog.ErrorContext(ctx, "captcha verification unavailable", "error", err)
 			respondUnavailable(c)
 			return
 		}
@@ -193,7 +193,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		if errors.Is(err, services.ErrInvalidCredentials) {
 			captchaNext, recErr := h.loginThrottle.RecordFailure(ctx, req.Email, ip)
 			if recErr != nil {
-				log.Printf("login throttle: record failure: %v", recErr)
+				slog.ErrorContext(ctx, "login throttle: record failure", "error", recErr)
 				captchaNext = state.CaptchaRequired
 			}
 			c.JSON(http.StatusUnauthorized, LoginErrorResponse{Error: err.Error(), CaptchaRequired: captchaNext})
@@ -205,7 +205,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	if err := h.loginThrottle.RecordSuccess(ctx, req.Email, ip); err != nil {
-		log.Printf("login throttle: record success: %v", err)
+		slog.ErrorContext(ctx, "login throttle: record success", "error", err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

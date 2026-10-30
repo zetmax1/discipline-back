@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 	"time"
 	_ "time/tzdata" // the alpine runtime image has no zoneinfo; users' IANA zones must load
 
@@ -12,6 +13,7 @@ import (
 	_ "discipline-backend/docs" // Swagger generated docs
 	"discipline-backend/internal/captcha"
 	"discipline-backend/internal/handlers"
+	"discipline-backend/internal/logging"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/routes"
@@ -30,6 +32,9 @@ import (
 // @description Enter your JWT token with the Bearer prefix: "Bearer <token>"
 
 func main() {
+	// Structured JSON logs on stdout (the standard log package included)
+	logging.Setup(os.Stdout)
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -67,7 +72,7 @@ func main() {
 
 	// Setup Gin router (release mode unless APP_ENV=development)
 	gin.SetMode(cfg.GinMode())
-	r := gin.Default()
+	r := gin.New() // RequestID, AccessLog and Recovery are added in SetupRoutes
 	if err := middleware.ConfigureClientIP(r, cfg.TrustedProxies, cfg.TrustedIPHeader); err != nil {
 		log.Fatalf("Invalid trusted proxy configuration: %v", err)
 	}

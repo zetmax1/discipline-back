@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/golang-jwt/jwt/v5"
+
+	"discipline-backend/internal/logging"
 )
 
 // Internal token settings shared with the Python service.
@@ -166,6 +168,9 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if id := logging.RequestID(c.Request.Context()); id != "" {
+		req.Header.Set("X-Request-ID", id)
+	}
 	if body != nil {
 		req.Header.Add("Content-Type", "application/json")
 	}

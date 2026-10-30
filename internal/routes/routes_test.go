@@ -86,3 +86,24 @@ func TestDashboardRoutes(t *testing.T) {
 		t.Fatalf("/api/dashboard/today must exist behind auth, got %d", w.Code)
 	}
 }
+
+func TestRouter_EveryResponseCarriesARequestID(t *testing.T) {
+	r := newTestRouter(false)
+	for _, path := range []string{"/ping", "/no-such-route", "/api/me"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Header().Get("X-Request-ID") == "" {
+			t.Errorf("%s: missing X-Request-ID", path)
+		}
+	}
+}
+
+func TestRouter_PanicIsRecoveredAs500(t *testing.T) {
+	r := newTestRouter(false)
+	r.GET("/boom", func(*gin.Context) { panic("boom") })
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
+	if w.Code != http.StatusInternalServerError || w.Header().Get("X-Request-ID") == "" {
+		t.Fatalf("a panic must become a 500 that still carries the request ID, got %d", w.Code)
+	}
+}

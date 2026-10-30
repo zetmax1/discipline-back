@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -73,7 +73,7 @@ func RateLimit(store ratelimit.Store, p Policy, key KeyFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		allowed, retryAfter, err := store.Hit(c.Request.Context(), "rl:"+p.Name+":"+key(c), p.Limit, p.Window)
 		if err != nil {
-			log.Printf("rate limit %s: store unavailable: %v", p.Name, err)
+			slog.ErrorContext(c.Request.Context(), "rate limit store unavailable", "policy", p.Name, "error", err)
 			if p.FailClosed {
 				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
 					"error": "Service temporarily unavailable. Please try again shortly.",

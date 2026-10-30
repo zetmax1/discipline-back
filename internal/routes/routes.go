@@ -37,7 +37,8 @@ func SetupRoutes(
 	loadUser middleware.UserLoader,
 	limits ratelimit.Store,
 ) {
-	// Global Middlewares
+	// Global Middlewares (request ID and access log first, so even a recovered panic is logged)
+	r.Use(middleware.RequestID(), middleware.AccessLog(), middleware.Recovery())
 	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RateLimit(limits, middleware.GlobalPolicy, middleware.ByUserOrIP(jwtSecret)))

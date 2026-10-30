@@ -13,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+
+	"discipline-backend/internal/logging"
 )
 
 const testInternalSecret = "internal-secret-for-tests-0123456789"
@@ -24,6 +26,7 @@ type upstreamRecorder struct {
 	lastURL  *url.URL
 	lastBody []byte
 	lastAuth string
+	lastRID  string
 }
 
 func (u *upstreamRecorder) server(t *testing.T) *httptest.Server {
@@ -35,6 +38,7 @@ func (u *upstreamRecorder) server(t *testing.T) *httptest.Server {
 		u.lastURL = r.URL
 		u.lastBody = body
 		u.lastAuth = r.Header.Get("Authorization")
+		u.lastRID = r.Header.Get("X-Request-ID")
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -392,4 +396,23 @@ func TestDashboardToday_ProxiesToPythonTodayWithUserToken(t *testing.T) {
 		t.Fatalf("must call /analytics/today with no client params, got %s?%s", up.lastURL.Path, up.lastURL.RawQuery)
 	}
 	assertForwardedUser(t, up, "1")
+}
+
+func TestAnalyticsProxy_ForwardsRequestID(t *testing.T) {
+	up := &upstreamRecorder{}
+	srv := up.server(t)
+	h := newTestAnalyticsHandler(t, srv.URL)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", uint(1))
+		c.Request = c.Request.WithContext(logging.WithRequestID(c.Request.Context(), "rid-0123456789"))
+	})
+	r.GET("/analytics", h.GetAnalytics)
+	if w := doRequest(r, http.MethodGet, "/analytics?range=week", ""); w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if up.lastRID != "rid-0123456789" {
+		t.Fatalf("the request ID must reach the analytics service, got %q", up.lastRID)
+	}
 }
