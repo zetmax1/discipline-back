@@ -145,7 +145,7 @@ go run ./cmd/migrate -database "postgres://..." down   # roll back one step
 ## Integration tests
 
 Database and Redis tests run against throwaway containers and are skipped without
-`TEST_DATABASE_URL` / `TEST_REDIS_URL` (CI fails if anything is skipped):
+`TEST_DATABASE_URL` / `TEST_REDIS_URL` (`make check` fails if anything is skipped):
 
 ```bash
 docker compose -f docker-compose.test.yml up -d --wait
@@ -154,6 +154,13 @@ export TEST_REDIS_URL='redis://127.0.0.1:56379/0'
 go test -race ./...
 docker compose -f docker-compose.test.yml down
 ```
+
+## Checks
+
+`make check` runs go vet, staticcheck, the tests above (it starts the containers itself),
+govulncheck, gosec and gitleaks over the full history. Needs Go and Docker.
+gosec findings reviewed as false positives are listed in `.gosec-baseline.json`; any other
+finding fails. `make test-down` stops the test containers.
 
 ## Contributing
 
