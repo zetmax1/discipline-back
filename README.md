@@ -144,11 +144,13 @@ go run ./cmd/migrate -database "postgres://..." down   # roll back one step
 
 ## Integration tests
 
-Database tests run against a throwaway Postgres and are skipped without `TEST_DATABASE_URL`:
+Database and Redis tests run against throwaway containers and are skipped without
+`TEST_DATABASE_URL` / `TEST_REDIS_URL` (CI fails if anything is skipped):
 
 ```bash
 docker compose -f docker-compose.test.yml up -d --wait
 export TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:55432/postgres?sslmode=disable'
+export TEST_REDIS_URL='redis://127.0.0.1:56379/0'
 go test -race ./...
 docker compose -f docker-compose.test.yml down
 ```
