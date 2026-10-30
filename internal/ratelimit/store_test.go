@@ -20,27 +20,31 @@ func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
 func newClock() *clock { return &clock{t: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)} }
 
 // stores returns every Store implementation to run the conformance tests against.
-// Redis runs only when TEST_REDIS_URL points at a throwaway server.
-func stores(t *testing.T) map[string]func(*clock) Store {
-	out := map[string]func(*clock) Store{
-		"memory": func(c *clock) Store { return NewMemoryStoreWithClock(c.now) },
+// The redis subtests skip, visibly, unless TEST_REDIS_URL points at a throwaway server.
+func stores(t *testing.T) map[string]func(*testing.T, *clock) Store {
+	out := map[string]func(*testing.T, *clock) Store{
+		"memory": func(_ *testing.T, c *clock) Store { return NewMemoryStoreWithClock(c.now) },
 	}
-	if url := os.Getenv("TEST_REDIS_URL"); url != "" {
-		opts, err := redis.ParseURL(url)
-		if err != nil {
-			t.Fatalf("TEST_REDIS_URL: %v", err)
+	url := os.Getenv("TEST_REDIS_URL")
+	if url == "" {
+		out["redis"] = func(t *testing.T, _ *clock) Store {
+			t.Skip("TEST_REDIS_URL not set: Redis store not tested (start docker-compose.test.yml or run make test)")
+			return nil
 		}
-		client := redis.NewClient(opts)
-		t.Cleanup(func() { _ = client.Close() })
-		out["redis"] = func(c *clock) Store {
-			buf := make([]byte, 6)
-			_, _ = rand.Read(buf)
-			s := NewRedisStore(client, "test:"+hex.EncodeToString(buf)+":")
-			s.now = c.now
-			return s
-		}
-	} else {
-		t.Log("TEST_REDIS_URL not set; Redis store not exercised (start docker-compose.test.yml)")
+		return out
+	}
+	opts, err := redis.ParseURL(url)
+	if err != nil {
+		t.Fatalf("TEST_REDIS_URL: %v", err)
+	}
+	client := redis.NewClient(opts)
+	t.Cleanup(func() { _ = client.Close() })
+	out["redis"] = func(_ *testing.T, c *clock) Store {
+		buf := make([]byte, 6)
+		_, _ = rand.Read(buf)
+		s := NewRedisStore(client, "test:"+hex.EncodeToString(buf)+":")
+		s.now = c.now
+		return s
 	}
 	return out
 }
@@ -50,7 +54,7 @@ func TestStore_HitAllowsLimitPerSlidingWindow(t *testing.T) {
 	for name, mk := range stores(t) {
 		t.Run(name, func(t *testing.T) {
 			clk := newClock()
-			s := mk(clk)
+			s := mk(t, clk)
 			for i := 0; i < 3; i++ {
 				ok, _, err := s.Hit(ctx, "k", 3, time.Minute)
 				if err != nil || !ok {
@@ -81,7 +85,7 @@ func TestStore_RefusedHitsAreNotCounted(t *testing.T) {
 	for name, mk := range stores(t) {
 		t.Run(name, func(t *testing.T) {
 			clk := newClock()
-			s := mk(clk)
+			s := mk(t, clk)
 			s.Hit(ctx, "k", 1, time.Minute)
 			for i := 0; i < 5; i++ {
 				clk.advance(time.Second)
@@ -100,7 +104,7 @@ func TestStore_RecordEventsAndClear(t *testing.T) {
 	for name, mk := range stores(t) {
 		t.Run(name, func(t *testing.T) {
 			clk := newClock()
-			s := mk(clk)
+			s := mk(t, clk)
 			start := clk.now()
 			for i := 0; i < 3; i++ {
 				if err := s.Record(ctx, "f", 15*time.Minute); err != nil {
