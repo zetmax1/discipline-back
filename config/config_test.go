@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -229,7 +231,7 @@ func TestLoad_AppEnvAndDocsFlags(t *testing.T) {
 
 func TestGormLogger_WarnLevelAndQuiet(t *testing.T) {
 	var buf bytes.Buffer
-	l := newGormLogger(&buf)
+	l := newGormLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
 	ctx := context.Background()
 
 	l.Info(ctx, "info message %s", "x")
@@ -242,8 +244,12 @@ func TestGormLogger_WarnLevelAndQuiet(t *testing.T) {
 	}
 
 	l.Warn(ctx, "warn message")
-	if !strings.Contains(buf.String(), "warn message") {
-		t.Fatal("warnings must still be logged")
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("GORM must log through the JSON logger, got %q", buf.String())
+	}
+	if msg, _ := line["msg"].(string); !strings.Contains(msg, "warn message") || line["level"] != "WARN" {
+		t.Fatalf("warnings must still be logged, got %v", line)
 	}
 }
 

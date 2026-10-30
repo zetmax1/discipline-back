@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"log"
-	"os"
+	"log/slog"
+	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -24,10 +24,18 @@ func postgresDSN(cfg *Config) string {
 	)
 }
 
+// slogWriter sends GORM's lines to a structured logger at WARN level (GORM only
+// logs warnings, errors and slow queries at the configured level).
+type slogWriter struct{ l *slog.Logger }
+
+func (w slogWriter) Printf(format string, args ...any) {
+	w.l.Warn(strings.TrimSpace(fmt.Sprintf(format, args...)), "source", "gorm")
+}
+
 // newGormLogger logs warnings and errors only, never logs "record not found",
 // and prints SQL without bound values so emails and other inputs stay out of logs.
-func newGormLogger(w io.Writer) logger.Interface {
-	return logger.New(log.New(w, "\r\n", log.LstdFlags), logger.Config{
+func newGormLogger(l *slog.Logger) logger.Interface {
+	return logger.New(slogWriter{l}, logger.Config{
 		SlowThreshold:             200 * time.Millisecond,
 		LogLevel:                  logger.Warn,
 		IgnoreRecordNotFoundError: true,
@@ -45,7 +53,7 @@ func configurePool(db *sql.DB) {
 
 // ConnectDB opens a GORM connection to PostgreSQL and verifies the schema is fully migrated.
 func ConnectDB(cfg *Config) *gorm.DB {
-	db, err := gorm.Open(postgres.Open(postgresDSN(cfg)), &gorm.Config{Logger: newGormLogger(os.Stdout)})
+	db, err := gorm.Open(postgres.Open(postgresDSN(cfg)), &gorm.Config{Logger: newGormLogger(slog.Default())})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
