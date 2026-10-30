@@ -39,6 +39,9 @@ type Config struct {
 	EnableIPDebug bool
 	// TurnstileSecret verifies Cloudflare Turnstile tokens on registration and throttled logins.
 	TurnstileSecret string
+	// SentryDSN enables error reporting to Sentry when set; SentryEnvironment labels events.
+	SentryDSN         string
+	SentryEnvironment string
 	// RedisURL holds the shared rate-limit and login-throttle state (redis:// or rediss://).
 	RedisURL string
 }
@@ -122,6 +125,8 @@ func Load() (*Config, error) {
 		EnableIPDebug:     strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_IP_DEBUG")), "true"),
 		RedisURL:          redisURL,
 		TurnstileSecret:   turnstileSecret,
+		SentryDSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
+		SentryEnvironment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
 	}, nil
 }
 

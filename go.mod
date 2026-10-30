@@ -5,6 +5,8 @@ go 1.26.0
 toolchain go1.26.10
 
 require (
+	github.com/getsentry/sentry-go v0.50.0
+	github.com/getsentry/sentry-go/gin v0.50.0
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.11.0

@@ -5,6 +5,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"discipline-backend/internal/errtrack"
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/models"
@@ -39,6 +40,7 @@ func SetupRoutes(
 ) {
 	// Global Middlewares (request ID and access log first, so even a recovered panic is logged)
 	r.Use(middleware.RequestID(), middleware.AccessLog(), middleware.Recovery())
+	r.Use(errtrack.Middleware()...) // no-op unless SENTRY_DSN is set
 	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.RateLimit(limits, middleware.GlobalPolicy, middleware.ByUserOrIP(jwtSecret)))

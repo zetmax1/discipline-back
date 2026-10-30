@@ -12,6 +12,7 @@ import (
 	"discipline-backend/config"
 	_ "discipline-backend/docs" // Swagger generated docs
 	"discipline-backend/internal/captcha"
+	"discipline-backend/internal/errtrack"
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/logging"
 	"discipline-backend/internal/middleware"
@@ -39,6 +40,13 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Startup aborted: %v", err)
+	}
+
+	// Optional error reporting
+	if enabled, err := errtrack.Init(errtrack.Options{DSN: cfg.SentryDSN, Environment: cfg.SentryEnvironment}); err != nil {
+		log.Fatalf("Invalid SENTRY_DSN: %v", err)
+	} else if enabled {
+		log.Println("Sentry error reporting enabled")
 	}
 
 	// Connect to database
