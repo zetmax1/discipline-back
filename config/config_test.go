@@ -286,3 +286,40 @@ func TestLoad_IPDebugOffUnlessTrue(t *testing.T) {
 		}
 	}
 }
+
+func TestEnabledFeatures_OnlyFeatureIDsSetToTrue(t *testing.T) {
+	got := EnabledFeatures([]string{
+		"FEATURE_F1=true",
+		"FEATURE_F12A=TRUE",
+		"FEATURE_F9B= true ",
+		"FEATURE_F3=false",
+		"FEATURE_F4=1",
+		"FEATURE_F5=",
+		"FEATURE_SOMETHING=true", // not an F<id>
+		"FEATURE_f6=true",        // ids are upper case
+		"NOT_FEATURE_F7=true",
+		"PATH=/usr/bin",
+	})
+	want := []string{"F1", "F12A", "F9B"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}
+
+func TestEnabledFeatures_NoneIsEmptyNotNil(t *testing.T) {
+	if got := EnabledFeatures(nil); got == nil || len(got) != 0 {
+		t.Fatalf("want an empty, non-nil list, got %#v", got)
+	}
+}
+
+func TestLoad_ReadsFeatureFlags(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("FEATURE_F1", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Features) != 1 || cfg.Features[0] != "F1" {
+		t.Fatalf("want [F1], got %v", cfg.Features)
+	}
+}

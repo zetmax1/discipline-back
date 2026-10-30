@@ -83,6 +83,13 @@ definitions:
         example: Validation failed
         type: string
     type: object
+  handlers.FeaturesResponse:
+    properties:
+      features:
+        items:
+          type: string
+        type: array
+    type: object
   handlers.LoginErrorResponse:
     properties:
       captchaRequired:
@@ -471,6 +478,22 @@ paths:
       summary: Today's dashboard metrics
       tags:
       - Dashboard
+  /features:
+    get:
+      description: Ids of the features switched on with FEATURE_<id>=true on the server.
+        Anything not listed is off.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.FeaturesResponse'
+      security:
+      - BearerAuth: []
+      summary: Enabled feature flags
+      tags:
+      - Features
   /me:
     get:
       description: Returns the authenticated user's profile

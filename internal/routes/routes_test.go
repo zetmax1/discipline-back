@@ -16,7 +16,7 @@ import (
 func newTestRouter(enableDocs bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
+	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{}, handlers.NewFeatureHandler([]string{"F1"}),
 		"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 		"internal-secret-for-tests-0123456789", enableDocs,
 		func(uint) (*middleware.AuthUser, error) {
@@ -105,5 +105,22 @@ func TestRouter_PanicIsRecoveredAs500(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
 	if w.Code != http.StatusInternalServerError || w.Header().Get("X-Request-ID") == "" {
 		t.Fatalf("a panic must become a 500 that still carries the request ID, got %d", w.Code)
+	}
+}
+
+func TestFeaturesRoute_OnlyForSignedInUsers(t *testing.T) {
+	r := newTestRouter(false)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/features", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous request: want 401, got %d", w.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/features", nil)
+	req.Header.Set("Authorization", "Bearer "+userToken(t, 7))
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != `{"features":["F1"]}` {
+		t.Fatalf("signed in: want 200 with [F1], got %d %s", w.Code, w.Body.String())
 	}
 }

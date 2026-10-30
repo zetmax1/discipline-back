@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -44,6 +45,8 @@ type Config struct {
 	SentryEnvironment string
 	// RedisURL holds the shared rate-limit and login-throttle state (redis:// or rediss://).
 	RedisURL string
+	// Features are the ids switched on with FEATURE_<id>=true, e.g. FEATURE_F12A → "F12A".
+	Features []string
 }
 
 // GinMode returns gin's debug mode only when APP_ENV=development.
@@ -127,6 +130,7 @@ func Load() (*Config, error) {
 		TurnstileSecret:   turnstileSecret,
 		SentryDSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
 		SentryEnvironment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
+		Features:          EnabledFeatures(os.Environ()),
 	}, nil
 }
 
@@ -148,6 +152,23 @@ func splitList(raw string) []string {
 		}
 	}
 	return out
+}
+
+// featureVar matches a feature flag variable: FEATURE_ + an id such as F1, F12A, F9B.
+var featureVar = regexp.MustCompile(`^FEATURE_(F[0-9]+[A-Z]?)$`)
+
+// EnabledFeatures returns the sorted ids of the FEATURE_<id> variables set to "true".
+// Any other value, or an unset variable, leaves the feature off.
+func EnabledFeatures(environ []string) []string {
+	enabled := []string{}
+	for _, kv := range environ {
+		key, value, _ := strings.Cut(kv, "=")
+		if m := featureVar.FindStringSubmatch(key); m != nil && strings.EqualFold(strings.TrimSpace(value), "true") {
+			enabled = append(enabled, m[1])
+		}
+	}
+	slices.Sort(enabled)
+	return enabled
 }
 
 // validProxy reports whether s is an IP address or CIDR range.

@@ -155,6 +155,13 @@ go test -race ./...
 docker compose -f docker-compose.test.yml down
 ```
 
+## Contract tests
+
+Handler tests check responses the web reads against the JSON Schemas the web generates
+(`discipline/contracts/<file>.schema.json`) with `contracttest.Validate(t, file, name, body)`;
+see `internal/handlers/feature_handler_test.go`. The schemas are read from `../discipline/contracts`
+next to this repo, or from `CONTRACTS_DIR`. A missing schema fails the test (it never skips).
+
 ## Checks
 
 `make check` runs go vet, staticcheck, the tests above (it starts the containers itself),

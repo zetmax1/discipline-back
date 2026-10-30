@@ -86,7 +86,7 @@ func main() {
 	}
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, handlers.NewFeatureHandler(cfg.Features), cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
 	routes.SetupIPDebug(r, cfg.EnableIPDebug)
 	sqlDB, err := db.DB()
 	if err != nil {

@@ -30,6 +30,7 @@ func SetupRoutes(
 	taskHandler *handlers.TaskHandler,
 	quoteHandler *handlers.QuoteHandler,
 	vocabHandler *handlers.VocabHandler,
+	featureHandler *handlers.FeatureHandler,
 	jwtSecret string,
 	allowedOrigins string,
 	pythonServiceURL string,
@@ -81,6 +82,9 @@ func SetupRoutes(
 			protected.GET("/me", authHandler.Me)
 			protected.PUT("/me", authHandler.UpdateProfile)
 			protected.POST("/auth/logout", authHandler.Logout)
+
+			// Feature flags (FEATURE_<id>=true on the server)
+			protected.GET("/features", featureHandler.List)
 
 			// Tasks
 			protected.POST("/tasks", taskHandler.CreateTask)

@@ -383,6 +383,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/features": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ids of the features switched on with FEATURE_\u003cid\u003e=true on the server. Anything not listed is off.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Features"
+                ],
+                "summary": "Enabled feature flags",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.FeaturesResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/me": {
             "get": {
                 "security": [
@@ -1121,6 +1146,17 @@ const docTemplate = `{
                 "error": {
                     "type": "string",
                     "example": "Validation failed"
+                }
+            }
+        },
+        "handlers.FeaturesResponse": {
+            "type": "object",
+            "properties": {
+                "features": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
