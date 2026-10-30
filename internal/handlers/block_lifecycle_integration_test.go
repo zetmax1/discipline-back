@@ -68,10 +68,10 @@ func TestCheckIn_RejectsBadInput(t *testing.T) {
 	_, id := e.create(t, taskJSON("A", "09:00", "10:00", "2026-10-29"))
 	path := fmt.Sprintf("/tasks/%d/check-in", id)
 	for body, code := range map[string]string{
-		`{"status":"moved"}`: "task_status_invalid",
-		`{"status":"done","focusRating":6}`: "task_focus_rating_invalid",
-		`{"status":"done","actualStartMin":600,"actualEndMin":590}`: "task_end_before_start",
-		`{"status":"done","actualStartMin":-1,"actualEndMin":30}`: "task_time_invalid",
+		`{"status":"moved"}`:                                          "task_status_invalid",
+		`{"status":"done","focusRating":6}`:                           "task_focus_rating_invalid",
+		`{"status":"done","actualStartMin":600,"actualEndMin":590}`:   "task_end_before_start",
+		`{"status":"done","actualStartMin":-1,"actualEndMin":30}`:     "task_time_invalid",
 		`{"status":"done","note":"` + strings.Repeat("x", 501) + `"}`: "task_note_too_long",
 	} {
 		w := doRequest(e.r, http.MethodPost, path, body)

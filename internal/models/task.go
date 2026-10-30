@@ -57,13 +57,13 @@ type Task struct {
 	Source       string    `gorm:"not null;default:manual" json:"source"` // manual | smart-schedule
 	PlanID       *string   `gorm:"type:uuid" json:"planId,omitempty"`     // set for smart-schedule blocks
 	// Lifecycle (F1): what actually happened.
-	ActualStartMin *int    `json:"actualStartMin"`
-	ActualEndMin   *int    `json:"actualEndMin"`
-	FocusRating    *int    `json:"focusRating"` // 1-5, asked after done/partial
-	Note           *string `json:"note"`
-	MovedFromID    *uint   `json:"movedFromId"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ActualStartMin *int      `json:"actualStartMin"`
+	ActualEndMin   *int      `json:"actualEndMin"`
+	FocusRating    *int      `json:"focusRating"` // 1-5, asked after done/partial
+	Note           *string   `json:"note"`
+	MovedFromID    *uint     `json:"movedFromId"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // BeforeSave keeps the minute columns in step with StartTime/EndTime on inserts and full saves

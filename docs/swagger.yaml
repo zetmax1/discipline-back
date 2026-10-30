@@ -68,6 +68,45 @@ definitions:
     required:
     - status
     type: object
+  handlers.CheckinRequest:
+    properties:
+      energy:
+        description: 1-5
+        example: 3
+        type: integer
+      note:
+        example: Slept well
+        type: string
+      skipped:
+        example: false
+        type: boolean
+      sleepEndMin:
+        example: 420
+        type: integer
+      sleepQuality:
+        description: 1-5
+        example: 4
+        type: integer
+      sleepStartMin:
+        description: after sleepEndMin = the evening before
+        example: 1410
+        type: integer
+    type: object
+  handlers.CheckinResponse:
+    properties:
+      checkin:
+        $ref: '#/definitions/models.Checkin'
+    type: object
+  handlers.CheckinTodayResponse:
+    properties:
+      checkin:
+        $ref: '#/definitions/models.Checkin'
+      date:
+        example: "2026-10-30"
+        type: string
+      defaults:
+        $ref: '#/definitions/handlers.SleepDefaults'
+    type: object
   handlers.CreateTaskRequest:
     properties:
       category:
@@ -168,6 +207,32 @@ definitions:
     - endMin
     - startMin
     type: object
+  handlers.ParkingListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handlers.ParkingNoteView'
+        type: array
+    type: object
+  handlers.ParkingNoteRequest:
+    properties:
+      sessionId:
+        type: string
+      text:
+        example: Email the professor
+        type: string
+    type: object
+  handlers.ParkingNoteView:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      sessionId:
+        type: string
+      text:
+        type: string
+    type: object
   handlers.RegisterRequest:
     properties:
       email:
@@ -206,6 +271,78 @@ definitions:
         type: string
     required:
     - weekStart
+    type: object
+  handlers.SessionListResponse:
+    properties:
+      serverNow:
+        type: string
+      sessions:
+        items:
+          $ref: '#/definitions/handlers.SessionView'
+        type: array
+    type: object
+  handlers.SessionRequest:
+    properties:
+      blockId:
+        type: integer
+      breakMinutes:
+        example: 5
+        type: integer
+      distractions:
+        example: 0
+        type: integer
+      endedAt:
+        type: string
+      outcome:
+        description: completed | abandoned
+        type: string
+      plannedMinutes:
+        example: 25
+        type: integer
+      startedAt:
+        description: only for a start queued offline
+        type: string
+    type: object
+  handlers.SessionResponse:
+    properties:
+      serverNow:
+        example: "2026-10-30T04:01:00Z"
+        type: string
+      session:
+        $ref: '#/definitions/handlers.SessionView'
+    type: object
+  handlers.SessionView:
+    properties:
+      blockId:
+        type: integer
+      breakMinutes:
+        example: 5
+        type: integer
+      distractions:
+        type: integer
+      endedAt:
+        type: string
+      id:
+        example: 6f1c2a7e-6a49-4a43-9c55-0d6f2b6a9f10
+        type: string
+      outcome:
+        description: completed | abandoned | null while running
+        type: string
+      plannedMinutes:
+        example: 25
+        type: integer
+      startedAt:
+        example: "2026-10-30T04:00:00Z"
+        type: string
+    type: object
+  handlers.SleepDefaults:
+    properties:
+      sleepEndMin:
+        example: 420
+        type: integer
+      sleepStartMin:
+        example: 1380
+        type: integer
     type: object
   handlers.UpdateProfileRequest:
     properties:
@@ -260,6 +397,27 @@ definitions:
     properties:
       user:
         $ref: '#/definitions/models.User'
+    type: object
+  models.Checkin:
+    properties:
+      date:
+        type: string
+      energy:
+        type: integer
+      note:
+        type: string
+      skipped:
+        type: boolean
+      sleepEndMin:
+        type: integer
+      sleepMinutes:
+        description: real elapsed time, computed in the user's zone
+        type: integer
+      sleepQuality:
+        type: integer
+      sleepStartMin:
+        description: '> SleepEndMin: began the evening before'
+        type: integer
     type: object
   models.Task:
     properties:
@@ -559,6 +717,50 @@ paths:
       summary: Register a new user
       tags:
       - Auth
+  /checkins/today:
+    get:
+      description: '"Today" is the user''s local date. checkin is null until done
+        or skipped; defaults prefill the sleep times.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.CheckinTodayResponse'
+      security:
+      - BearerAuth: []
+      summary: Today's morning check-in
+      tags:
+      - Daily
+    put:
+      consumes:
+      - application/json
+      description: 'Creates or replaces the check-in for the user''s local date (editable
+        the same day). Send {"skipped": true} to skip.'
+      parameters:
+      - description: Check-in
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CheckinRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.CheckinResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save today's morning check-in
+      tags:
+      - Daily
   /dashboard/today:
     get:
       description: Planned/done minutes and focus-score components for today in the
@@ -647,6 +849,56 @@ paths:
       summary: Update user profile
       tags:
       - Auth
+  /parking-lot:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ParkingListResponse'
+      security:
+      - BearerAuth: []
+      summary: Parked thoughts
+      tags:
+      - Daily
+  /parking-lot/{id}:
+    put:
+      consumes:
+      - application/json
+      description: The client makes the id (UUID); sending it again stores nothing
+        new.
+      parameters:
+      - description: Note UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Note
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ParkingNoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Park a thought for later
+      tags:
+      - Daily
   /quote:
     get:
       description: Returns a motivational quote. Cached for 2-3 hours, refreshes automatically.
@@ -662,6 +914,84 @@ paths:
       summary: Get motivational quote
       tags:
       - Quotes
+  /sessions:
+    get:
+      parameters:
+      - description: 'YYYY-MM-DD (default: today in the user''s zone)'
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.SessionListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Focus sessions started on a day
+      tags:
+      - Daily
+  /sessions/{id}:
+    put:
+      consumes:
+      - application/json
+      description: The client makes the id (UUID); the same body sent again changes
+        nothing. A new session gets the server's time as its start (or startedAt,
+        for a start queued offline in the last 24 h). One running session per user.
+      parameters:
+      - description: Session UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.SessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start or update a focus session
+      tags:
+      - Daily
+  /sessions/active:
+    get:
+      description: session is null when none is running. Sessions left running 60
+        min past their planned end are ended as abandoned.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.SessionResponse'
+      security:
+      - BearerAuth: []
+      summary: The running focus session
+      tags:
+      - Daily
   /tasks:
     get:
       description: Returns tasks for the authenticated user, optionally filtered by

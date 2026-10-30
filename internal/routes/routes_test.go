@@ -16,7 +16,7 @@ import (
 func newTestRouter(enableDocs bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{}, handlers.NewFeatureHandler([]string{"F1"}),
+	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{}, handlers.NewFeatureHandler([]string{"F1"}), &handlers.DailyHandler{},
 		"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 		"internal-secret-for-tests-0123456789", enableDocs,
 		func(uint) (*middleware.AuthUser, error) {
@@ -140,9 +140,11 @@ func TestDailyLoopRoutesFollowFeatureF1(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	off := gin.New()
 	SetupRoutes(off, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
-		handlers.NewFeatureHandler(nil), "jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
+		handlers.NewFeatureHandler(nil), &handlers.DailyHandler{}, "jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 		"internal-secret-for-tests-0123456789", false,
-		func(uint) (*middleware.AuthUser, error) { return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil },
+		func(uint) (*middleware.AuthUser, error) {
+			return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil
+		},
 		ratelimit.NewMemoryStore())
 	if served(off) {
 		t.Fatal("with F1 off, the check-in route must not exist")

@@ -32,6 +32,7 @@ func SetupRoutes(
 	quoteHandler *handlers.QuoteHandler,
 	vocabHandler *handlers.VocabHandler,
 	featureHandler *handlers.FeatureHandler,
+	dailyHandler *handlers.DailyHandler,
 	jwtSecret string,
 	allowedOrigins string,
 	pythonServiceURL string,
@@ -98,6 +99,7 @@ func SetupRoutes(
 			if featureHandler.Enabled("F1") { // the daily loop
 				protected.POST("/tasks/:id/check-in", taskHandler.CheckIn)
 				protected.POST("/tasks/:id/move", taskHandler.MoveTask)
+				handlers.RegisterDailyRoutes(protected, dailyHandler)
 			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)

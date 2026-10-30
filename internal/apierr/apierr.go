@@ -52,6 +52,10 @@ const (
 	TaskNoteTooLong         Code = "task_note_too_long"
 	TaskNotMovable          Code = "task_not_movable"
 	IdempotencyKeyRequired  Code = "idempotency_key_required"
+	CheckinInvalid          Code = "checkin_invalid"
+	SessionInvalid          Code = "session_invalid"
+	SessionActive           Code = "session_active"
+	ParkingNoteInvalid      Code = "parking_note_invalid"
 
 	WordNotFound  Code = "word_not_found"
 	WordIDInvalid Code = "word_id_invalid"
@@ -71,6 +75,7 @@ var All = []Code{
 	InvalidTimezone, TaskNotFound, TaskIDInvalid, TaskNameLength, TaskDateInvalid, TaskTimeInvalid, TaskEndBeforeStart,
 	TaskCategoryInvalid, TaskEnergyInvalid, TaskStatusInvalid, TaskDistractionsInvalid, TaskOverlap, PlanWeekInvalid,
 	TaskFocusRatingInvalid, TaskNoteTooLong, TaskNotMovable, IdempotencyKeyRequired,
+	CheckinInvalid, SessionInvalid, SessionActive, ParkingNoteInvalid,
 	WordNotFound, WordIDInvalid, DateInvalid, RangeInvalid, DaysInvalid, AnalyticsUnavailable, AnalyticsValidationFailed,
 }
 

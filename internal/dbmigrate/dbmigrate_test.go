@@ -3,8 +3,8 @@ package dbmigrate_test
 import (
 	"context"
 	"database/sql"
-	"os"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 

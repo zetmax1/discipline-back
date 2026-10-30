@@ -351,6 +351,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/checkins/today": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "\"Today\" is the user's local date. checkin is null until done or skipped; defaults prefill the sleep times.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Today's morning check-in",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CheckinTodayResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates or replaces the check-in for the user's local date (editable the same day). Send {\"skipped\": true} to skip.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Save today's morning check-in",
+                "parameters": [
+                    {
+                        "description": "Check-in",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CheckinRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CheckinResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/dashboard/today": {
             "get": {
                 "security": [
@@ -488,6 +556,85 @@ const docTemplate = `{
                 }
             }
         },
+        "/parking-lot": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Parked thoughts",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ParkingListResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/parking-lot/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The client makes the id (UUID); sending it again stores nothing new.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Park a thought for later",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Note UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Note",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ParkingNoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/quote": {
             "get": {
                 "security": [
@@ -508,6 +655,127 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/handlers.CachedQuote"
+                        }
+                    }
+                }
+            }
+        },
+        "/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Focus sessions started on a day",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "YYYY-MM-DD (default: today in the user's zone)",
+                        "name": "date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SessionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sessions/active": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "session is null when none is running. Sessions left running 60 min past their planned end are ended as abandoned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "The running focus session",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SessionResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sessions/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The client makes the id (UUID); the same body sent again changes nothing. A new session gets the server's time as its start (or startedAt, for a start queued offline in the last 24 h). One running session per user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Daily"
+                ],
+                "summary": "Start or update a focus session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Session",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     }
                 }
@@ -1267,6 +1535,61 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.CheckinRequest": {
+            "type": "object",
+            "properties": {
+                "energy": {
+                    "description": "1-5",
+                    "type": "integer",
+                    "example": 3
+                },
+                "note": {
+                    "type": "string",
+                    "example": "Slept well"
+                },
+                "skipped": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "sleepEndMin": {
+                    "type": "integer",
+                    "example": 420
+                },
+                "sleepQuality": {
+                    "description": "1-5",
+                    "type": "integer",
+                    "example": 4
+                },
+                "sleepStartMin": {
+                    "description": "after sleepEndMin = the evening before",
+                    "type": "integer",
+                    "example": 1410
+                }
+            }
+        },
+        "handlers.CheckinResponse": {
+            "type": "object",
+            "properties": {
+                "checkin": {
+                    "$ref": "#/definitions/models.Checkin"
+                }
+            }
+        },
+        "handlers.CheckinTodayResponse": {
+            "type": "object",
+            "properties": {
+                "checkin": {
+                    "$ref": "#/definitions/models.Checkin"
+                },
+                "date": {
+                    "type": "string",
+                    "example": "2026-10-30"
+                },
+                "defaults": {
+                    "$ref": "#/definitions/handlers.SleepDefaults"
+                }
+            }
+        },
         "handlers.CreateTaskRequest": {
             "type": "object",
             "required": [
@@ -1401,6 +1724,46 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.ParkingListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.ParkingNoteView"
+                    }
+                }
+            }
+        },
+        "handlers.ParkingNoteRequest": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string",
+                    "example": "Email the professor"
+                }
+            }
+        },
+        "handlers.ParkingNoteView": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "sessionId": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.RegisterRequest": {
             "type": "object",
             "required": [
@@ -1449,6 +1812,110 @@ const docTemplate = `{
                     "description": "a Monday",
                     "type": "string",
                     "example": "2026-11-02"
+                }
+            }
+        },
+        "handlers.SessionListResponse": {
+            "type": "object",
+            "properties": {
+                "serverNow": {
+                    "type": "string"
+                },
+                "sessions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.SessionView"
+                    }
+                }
+            }
+        },
+        "handlers.SessionRequest": {
+            "type": "object",
+            "properties": {
+                "blockId": {
+                    "type": "integer"
+                },
+                "breakMinutes": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "distractions": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "endedAt": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "description": "completed | abandoned",
+                    "type": "string"
+                },
+                "plannedMinutes": {
+                    "type": "integer",
+                    "example": 25
+                },
+                "startedAt": {
+                    "description": "only for a start queued offline",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.SessionResponse": {
+            "type": "object",
+            "properties": {
+                "serverNow": {
+                    "type": "string",
+                    "example": "2026-10-30T04:01:00Z"
+                },
+                "session": {
+                    "$ref": "#/definitions/handlers.SessionView"
+                }
+            }
+        },
+        "handlers.SessionView": {
+            "type": "object",
+            "properties": {
+                "blockId": {
+                    "type": "integer"
+                },
+                "breakMinutes": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "distractions": {
+                    "type": "integer"
+                },
+                "endedAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "6f1c2a7e-6a49-4a43-9c55-0d6f2b6a9f10"
+                },
+                "outcome": {
+                    "description": "completed | abandoned | null while running",
+                    "type": "string"
+                },
+                "plannedMinutes": {
+                    "type": "integer",
+                    "example": 25
+                },
+                "startedAt": {
+                    "type": "string",
+                    "example": "2026-10-30T04:00:00Z"
+                }
+            }
+        },
+        "handlers.SleepDefaults": {
+            "type": "object",
+            "properties": {
+                "sleepEndMin": {
+                    "type": "integer",
+                    "example": 420
+                },
+                "sleepStartMin": {
+                    "type": "integer",
+                    "example": 1380
                 }
             }
         },
@@ -1523,6 +1990,37 @@ const docTemplate = `{
             "properties": {
                 "user": {
                     "$ref": "#/definitions/models.User"
+                }
+            }
+        },
+        "models.Checkin": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "energy": {
+                    "type": "integer"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "skipped": {
+                    "type": "boolean"
+                },
+                "sleepEndMin": {
+                    "type": "integer"
+                },
+                "sleepMinutes": {
+                    "description": "real elapsed time, computed in the user's zone",
+                    "type": "integer"
+                },
+                "sleepQuality": {
+                    "type": "integer"
+                },
+                "sleepStartMin": {
+                    "description": "\u003e SleepEndMin: began the evening before",
+                    "type": "integer"
                 }
             }
         },

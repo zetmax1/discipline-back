@@ -35,7 +35,7 @@ func newAppRouter(t *testing.T) *gin.Engine {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	SetupRoutes(r, authHandler, taskHandler, handlers.NewQuoteHandler(), vocabHandler, handlers.NewFeatureHandler(nil),
+	SetupRoutes(r, authHandler, taskHandler, handlers.NewQuoteHandler(), vocabHandler, handlers.NewFeatureHandler(nil), &handlers.DailyHandler{},
 		flowJWTSecret, "https://app.example.com", "http://py.invalid", "internal-secret-for-tests-0123456789", false,
 		UserLoader(userRepo), ratelimit.NewMemoryStore())
 	return r
