@@ -250,7 +250,17 @@ func (h *AnalyticsHandler) GetToday(c *gin.Context) {
 	h.forward(c, http.MethodGet, h.upstreamURL("/analytics/today", nil), nil)
 }
 
-// GetFocusPatterns proxies the focus-patterns endpoint
+// GetFocusPatterns godoc
+// @Summary      Focus patterns
+// @Description  Heatmap, weekday scores, deep-work slots and distraction trend over the last N days, computed by the analytics service.
+// @Tags         Analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Param        days  query  int  false  "Days to cover (7-365, defaults to 30)"  example(30)
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  ErrorResponse
+// @Failure      502   {object}  ErrorResponse
+// @Router       /analytics/focus-patterns [get]
 func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 	days := defaultFocusDays
 	if raw := c.Query("days"); raw != "" {

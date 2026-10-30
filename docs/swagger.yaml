@@ -1,5 +1,14 @@
 basePath: /api
 definitions:
+  handlers.AdjustDistractionsRequest:
+    properties:
+      delta:
+        description: 1 or -1
+        example: 1
+        type: integer
+    required:
+    - delta
+    type: object
   handlers.AuthResponse:
     properties:
       message:
@@ -10,6 +19,17 @@ definitions:
         type: string
       user:
         $ref: '#/definitions/models.User'
+    type: object
+  handlers.BulkCreateTasksRequest:
+    properties:
+      tasks:
+        items:
+          $ref: '#/definitions/handlers.CreateTaskRequest'
+        maxItems: 200
+        minItems: 1
+        type: array
+    required:
+    - tasks
     type: object
   handlers.CachedQuote:
     properties:
@@ -23,31 +43,27 @@ definitions:
   handlers.CreateTaskRequest:
     properties:
       category:
-        enum:
-        - deep-work
-        - study
-        - admin
-        - gym
-        - rest
+        description: deep-work|study|admin|gym|rest
         example: deep-work
         type: string
       date:
+        description: YYYY-MM-DD
         example: "2026-03-02"
         type: string
       endTime:
+        description: HH:MM, after start, ≤ 24:00
         example: "10:00"
         type: string
       energy:
+        description: 1-5
         example: 4
-        maximum: 5
-        minimum: 1
         type: integer
       name:
+        description: 1-120 chars
         example: Morning routine
-        maxLength: 200
-        minLength: 1
         type: string
       startTime:
+        description: HH:MM
         example: "09:00"
         type: string
     required:
@@ -67,6 +83,15 @@ definitions:
         example: Validation failed
         type: string
     type: object
+  handlers.LoginErrorResponse:
+    properties:
+      captchaRequired:
+        example: false
+        type: boolean
+      error:
+        example: invalid email or password
+        type: string
+    type: object
   handlers.LoginRequest:
     properties:
       email:
@@ -74,6 +99,12 @@ definitions:
         type: string
       password:
         example: securepass123
+        type: string
+      turnstileToken:
+        description: TurnstileToken is required once the email has 3 failed logins
+          in 15 minutes.
+        example: 0.turnstile-token
+        maxLength: 2048
         type: string
     required:
     - email
@@ -90,13 +121,55 @@ definitions:
         minLength: 2
         type: string
       password:
+        description: 'policy: 10+ chars, max 72 bytes'
         example: securepass123
-        minLength: 6
+        type: string
+      turnstileToken:
+        description: TurnstileToken is required on public registration (not on admin
+          registration).
+        example: 0.turnstile-token
+        maxLength: 2048
         type: string
     required:
     - email
     - name
     - password
+    type: object
+  handlers.SavePlanRequest:
+    properties:
+      tasks:
+        items:
+          $ref: '#/definitions/handlers.CreateTaskRequest'
+        maxItems: 200
+        type: array
+      weekStart:
+        description: a Monday
+        example: "2026-11-02"
+        type: string
+    required:
+    - weekStart
+    type: object
+  handlers.UpdateProfileRequest:
+    properties:
+      email:
+        example: jane@example.com
+        type: string
+      name:
+        example: Jane Doe
+        maxLength: 100
+        type: string
+      newPassword:
+        example: newpass456
+        type: string
+      oldPassword:
+        description: required to change email or password
+        example: oldpass123
+        type: string
+      timezone:
+        description: IANA name
+        example: Asia/Tashkent
+        maxLength: 64
+        type: string
     type: object
   handlers.UpdateTaskRequest:
     properties:
@@ -142,25 +215,11 @@ definitions:
         type: string
       role:
         type: string
+      timezone:
+        description: IANA name
+        type: string
       updated_at:
         type: string
-    type: object
-  services.DashboardStats:
-    properties:
-      completedTasks:
-        type: integer
-      completionRate:
-        description: percentage 0-100
-        type: integer
-      deepWorkHours:
-        type: number
-      focusScore:
-        description: 0-100
-        type: integer
-      totalHours:
-        type: number
-      totalTasks:
-        type: integer
     type: object
 host: localhost:8080
 info:
@@ -206,11 +265,109 @@ paths:
       summary: Register a new admin (admin only)
       tags:
       - Admin
+  /analytics:
+    get:
+      description: Proxies request to the Python analytics microservice securely using
+        the authenticated user's ID.
+      parameters:
+      - description: Report range (week or month, defaults to week)
+        example: week
+        in: query
+        name: range
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get productivity analytics
+      tags:
+      - Analytics
+  /analytics/focus-patterns:
+    get:
+      description: Heatmap, weekday scores, deep-work slots and distraction trend
+        over the last N days, computed by the analytics service.
+      parameters:
+      - description: Days to cover (7-365, defaults to 30)
+        example: 30
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Focus patterns
+      tags:
+      - Analytics
+  /analytics/smart-schedule:
+    post:
+      consumes:
+      - application/json
+      description: Proxies request to Python to generate a weekly schedule based on
+        user's past habits.
+      parameters:
+      - description: Smart schedule request (commitments and goals)
+        in: body
+        name: body
+        required: true
+        schema: {}
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generate smart schedule
+      tags:
+      - Analytics
   /auth/login:
     post:
       consumes:
       - application/json
-      description: Authenticates a user and returns a JWT token
+      description: Authenticates a user and returns a JWT token. Failures are throttled
+        per (email, IP) with a progressive delay (429 + Retry-After) and per IP; after
+        3 failures for an email within 15 minutes, a Turnstile token is required (401
+        with captchaRequired).
       parameters:
       - description: Login credentials
         in: body
@@ -232,8 +389,31 @@ paths:
         "401":
           description: Unauthorized
           schema:
+            $ref: '#/definitions/handlers.LoginErrorResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
             $ref: '#/definitions/handlers.ErrorResponse'
       summary: Login
+      tags:
+      - Auth
+  /auth/logout:
+    post:
+      description: Revokes every token issued to the authenticated user
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Log out everywhere
       tags:
       - Auth
   /auth/register:
@@ -263,33 +443,32 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
       summary: Register a new user
       tags:
       - Auth
-  /dashboard/stats:
+  /dashboard/today:
     get:
-      description: Returns computed stats for a given date (completion, focus score,
-        hours)
-      parameters:
-      - description: Date (YYYY-MM-DD), defaults to today
-        example: "2026-03-02"
-        in: query
-        name: date
-        type: string
+      description: Planned/done minutes and focus-score components for today in the
+        user's time zone, computed by the analytics service.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/services.DashboardStats'
-        "500":
-          description: Internal Server Error
+            additionalProperties: true
+            type: object
+        "502":
+          description: Bad Gateway
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Get dashboard statistics
+      summary: Today's dashboard metrics
       tags:
       - Dashboard
   /me:
@@ -313,6 +492,34 @@ paths:
       security:
       - BearerAuth: []
       summary: Get current user
+      tags:
+      - Auth
+    put:
+      consumes:
+      - application/json
+      description: Updates the authenticated user's name, email, and/or password.
+        Changing email or password requires oldPassword.
+      parameters:
+      - description: Profile update data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update user profile
       tags:
       - Auth
   /quote:
@@ -378,6 +585,10 @@ paths:
             type: object
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
       security:
@@ -446,6 +657,108 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a task
+      tags:
+      - Tasks
+  /tasks/{id}/distractions:
+    post:
+      consumes:
+      - application/json
+      description: Atomically adds delta (1 or -1) to a block's distraction count,
+        clamped to 0-100
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Delta
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.AdjustDistractionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Increment or decrement distractions
+      tags:
+      - Tasks
+  /tasks/bulk:
+    post:
+      consumes:
+      - application/json
+      description: Creates multiple time blocks for the authenticated user
+      parameters:
+      - description: Array of tasks
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkCreateTasksRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create multiple tasks
+      tags:
+      - Tasks
+  /tasks/plan:
+    put:
+      consumes:
+      - application/json
+      description: Replaces the blocks previously generated for that week (manual
+        blocks are kept) in one transaction.
+      parameters:
+      - description: Week and blocks
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SavePlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save a generated weekly plan
       tags:
       - Tasks
   /vocabulary:

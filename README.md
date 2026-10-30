@@ -75,6 +75,12 @@ Swagger documentation is available at `/swagger/index.html` when the server runs
 
 The API is documented using Swagger. Start the server with `ENABLE_DOCS=true`, then visit `http://localhost:8080/swagger/index.html` to view the interactive API documentation.
 
+`docs/` is generated from the handler annotations. After changing a route or its annotations, regenerate it (a test fails while it is stale):
+
+```bash
+go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go -o docs
+```
+
 ## Project Structure
 
 ```
