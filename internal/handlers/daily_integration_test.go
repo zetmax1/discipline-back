@@ -111,6 +111,16 @@ func TestMorningCheckin_SleepAcrossTheSpringForwardNight(t *testing.T) {
 	}
 }
 
+func TestMorningCheckin_SleepAcrossTheFallBackNight_AmericaNewYork(t *testing.T) {
+	const tz = "America/New_York" // clocks fall back 02:00 -> 01:00 on 2026-11-01
+	e := newDailyEnv(t, tz)
+	at(t, tz, "2026-11-01 08:00")
+	_, body := e.call(t, http.MethodPut, "/checkins/today", `{"sleepStartMin":1380,"sleepEndMin":420,"sleepQuality":4,"energy":4}`)
+	if got := body["checkin"].(map[string]any)["sleepMinutes"]; got != float64(540) {
+		t.Fatalf("23:00 -> 07:00 on the autumn DST fall-back night is 9 h of real time, got %v minutes", got)
+	}
+}
+
 func TestMorningCheckin_SkipAndDefaultsForANewUser(t *testing.T) {
 	const tz = "Asia/Tashkent"
 	e := newDailyEnv(t, tz)
