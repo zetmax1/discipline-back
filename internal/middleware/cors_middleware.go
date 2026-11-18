@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"discipline-backend/internal/apierr"
+
 	"net/http"
 	"strings"
 
@@ -30,7 +32,7 @@ func CORSMiddleware(allowedOrigins string) gin.HandlerFunc {
 		c.Writer.Header().Add("Vary", "Origin")
 		if !originSet[origin] {
 			if c.Request.Method == http.MethodOptions {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "origin not allowed"})
+				apierr.Abort(c, http.StatusForbidden, apierr.OriginNotAllowed, "origin not allowed")
 				return
 			}
 			c.Next()

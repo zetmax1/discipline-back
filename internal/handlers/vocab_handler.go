@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/services"
 )
 
@@ -25,10 +26,10 @@ func NewVocabHandler(vocabService services.VocabService) *VocabHandler {
 // respondWordError maps a missing word to 404 and any other failure to 500.
 func respondWordError(c *gin.Context, err error) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Word not found"})
+		apierr.JSON(c, http.StatusNotFound, apierr.WordNotFound, "Word not found")
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update word"})
+	apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to update word")
 }
 
 // validVocabDate accepts a real YYYY-MM-DD date at most one day after today in the user's zone.
@@ -57,13 +58,13 @@ func (h *VocabHandler) GetTodayWords(c *gin.Context) {
 	if date == "" {
 		date = userToday(c)
 	} else if !validVocabDate(c, date) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "date must be a valid YYYY-MM-DD date no later than tomorrow"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.DateInvalid, "date must be a valid YYYY-MM-DD date no later than tomorrow")
 		return
 	}
 
 	words, err := h.vocabService.GetTodayWords(userID, date)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch vocabulary"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to fetch vocabulary")
 		return
 	}
 
@@ -87,7 +88,7 @@ func (h *VocabHandler) ToggleLearned(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	wordID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid word ID"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.WordIDInvalid, "Invalid word ID")
 		return
 	}
 
@@ -114,7 +115,7 @@ func (h *VocabHandler) ToggleSaved(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 	wordID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid word ID"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.WordIDInvalid, "Invalid word ID")
 		return
 	}
 
@@ -155,7 +156,7 @@ func (h *VocabHandler) GetAllWords(c *gin.Context) {
 
 	words, total, err := h.vocabService.GetAllWords(userID, lang, page, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch vocabulary"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to fetch vocabulary")
 		return
 	}
 

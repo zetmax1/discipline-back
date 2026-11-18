@@ -5,9 +5,12 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"discipline-backend/internal/apierr"
+	"discipline-backend/internal/errtrack"
 	"discipline-backend/internal/handlers"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/models"
+	"discipline-backend/internal/ratelimit"
 	"discipline-backend/internal/repositories"
 )
 
@@ -28,24 +31,29 @@ func SetupRoutes(
 	taskHandler *handlers.TaskHandler,
 	quoteHandler *handlers.QuoteHandler,
 	vocabHandler *handlers.VocabHandler,
+	featureHandler *handlers.FeatureHandler,
+	dailyHandler *handlers.DailyHandler,
 	jwtSecret string,
 	allowedOrigins string,
 	pythonServiceURL string,
 	internalJWTSecret string,
 	enableDocs bool,
 	loadUser middleware.UserLoader,
+	limits ratelimit.Store,
 ) {
-	// Global Middlewares
+	// Global Middlewares (request ID and access log first, so even a recovered panic is logged)
+	r.Use(middleware.RequestID(), middleware.AccessLog(), middleware.Recovery())
+	r.Use(errtrack.Middleware()...) // no-op unless SENTRY_DSN is set
 	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.SecurityHeaders())
-	r.Use(middleware.GlobalRateLimiter())
+	r.Use(middleware.RateLimit(limits, middleware.GlobalPolicy, middleware.ByUserOrIP(jwtSecret)))
 	r.Use(middleware.CORSMiddleware(allowedOrigins))
 
 	r.NoRoute(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
-		c.JSON(404, gin.H{"error": "route not found"})
+		apierr.JSON(c, 404, apierr.NotFound, "route not found")
 	})
 	r.NoMethod(middleware.CORSMiddleware(allowedOrigins), func(c *gin.Context) {
-		c.JSON(405, gin.H{"error": "method not allowed"})
+		apierr.JSON(c, 405, apierr.MethodNotAllowed, "method not allowed")
 	})
 
 	// Swagger UI (only when ENABLE_DOCS=true)
@@ -62,7 +70,7 @@ func SetupRoutes(
 	{
 		// Public auth routes with strict rate limiting
 		auth := api.Group("/auth")
-		auth.Use(middleware.AuthRateLimiter())
+		auth.Use(middleware.RateLimit(limits, middleware.AuthPolicy, middleware.ByClientIP))
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
@@ -77,13 +85,22 @@ func SetupRoutes(
 			protected.PUT("/me", authHandler.UpdateProfile)
 			protected.POST("/auth/logout", authHandler.Logout)
 
+			// Feature flags (FEATURE_<id>=true on the server)
+			protected.GET("/features", featureHandler.List)
+
 			// Tasks
 			protected.POST("/tasks", taskHandler.CreateTask)
 			protected.POST("/tasks/bulk", taskHandler.BulkCreateTasks)
+			protected.PUT("/tasks/plan", taskHandler.SavePlan)
 			protected.GET("/tasks", taskHandler.GetTasks)
 			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
 			protected.POST("/tasks/:id/distractions", taskHandler.AdjustDistractions)
 			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
+			if featureHandler.Enabled("F1") { // the daily loop
+				protected.POST("/tasks/:id/check-in", taskHandler.CheckIn)
+				protected.POST("/tasks/:id/move", taskHandler.MoveTask)
+				handlers.RegisterDailyRoutes(protected, dailyHandler)
+			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
 
@@ -92,7 +109,7 @@ func SetupRoutes(
 
 			// Analytics (proxied to Python service with strict rate limiting)
 			analytics := protected.Group("/analytics")
-			analytics.Use(middleware.AnalyticsRateLimiter())
+			analytics.Use(middleware.RateLimit(limits, middleware.AnalyticsPolicy, middleware.ByUserID))
 			{
 				analytics.GET("", analyticsHandler.GetAnalytics)
 				analytics.GET("/focus-patterns", analyticsHandler.GetFocusPatterns)

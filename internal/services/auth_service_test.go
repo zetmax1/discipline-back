@@ -9,6 +9,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/models"
 )
 
@@ -202,4 +203,50 @@ func TestAccessToken_Lasts24HoursAndCarriesVersion(t *testing.T) {
 	if tv, ok := claims["tv"].(float64); !ok || tv != 0 {
 		t.Fatalf("token must carry tv=0 for a new user, got %v", claims["tv"])
 	}
+}
+
+func TestUpdateProfile_ErrorsCarryCodes(t *testing.T) {
+	svc, _ := newTestAuthService()
+	u, _, _ := svc.Register("Ann", "ann@example.com", "long-enough-pw")
+	_, _, _ = svc.Register("Bob", "bob@example.com", "long-enough-pw")
+	cases := []struct {
+		name                        string
+		email, old, newPw, timezone string
+		want                        apierr.Code
+	}{
+		{"email change without password", "new@example.com", "", "", "", apierr.CurrentPasswordRequired},
+		{"new password without old", "", "", "another-long-pw", "", apierr.CurrentPasswordRequired},
+		{"wrong current password", "new@example.com", "wrong-password", "", "", apierr.CurrentPasswordIncorrect},
+		{"password too short", "", "long-enough-pw", "short", "", apierr.PasswordTooShort},
+		{"password too long", "", "long-enough-pw", strings.Repeat("x", 73), "", apierr.PasswordTooLong},
+		{"email of another user", "bob@example.com", "long-enough-pw", "", "", apierr.EmailTaken},
+		{"bad timezone", "", "", "", "Mars/Base", apierr.InvalidTimezone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := svc.UpdateProfile(u.ID, "", tc.email, tc.old, tc.newPw, tc.timezone)
+			if code, _ := apierr.CodeOf(err); code != tc.want {
+				t.Fatalf("want %q, got %q (%v)", tc.want, code, err)
+			}
+		})
+	}
+	if _, _, err := svc.UpdateProfile(999, "", "", "", "", ""); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("unknown user: want ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestRegister_ErrorsCarryCodes(t *testing.T) {
+	svc, _ := newTestAuthService()
+	if _, _, err := svc.Register("Ann", "ann@example.com", "short"); !hasCode(err, apierr.PasswordTooShort) {
+		t.Fatalf("want password_too_short, got %v", err)
+	}
+	_, _, _ = svc.Register("Ann", "ann@example.com", "long-enough-pw")
+	if _, _, err := svc.Register("Ann", "ann@example.com", "long-enough-pw"); !hasCode(err, apierr.EmailTaken) || !errors.Is(err, ErrEmailTaken) {
+		t.Fatalf("want email_taken wrapping ErrEmailTaken, got %v", err)
+	}
+}
+
+func hasCode(err error, want apierr.Code) bool {
+	code, ok := apierr.CodeOf(err)
+	return ok && code == want
 }

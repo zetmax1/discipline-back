@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +15,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/golang-jwt/jwt/v5"
+
+	"discipline-backend/internal/apierr"
+	"discipline-backend/internal/logging"
 )
 
 // Internal token settings shared with the Python service.
@@ -82,30 +84,31 @@ const (
 )
 
 // SmartScheduleCommitment is a fixed commitment sent to the schedule generator.
+// Gin only enforces structure and size here; the analytics service validates the
+// values (time format, end != start, day names) and answers 422, which is relayed.
 type SmartScheduleCommitment struct {
-	ID        string   `json:"id" binding:"required,max=64"`
-	Name      string   `json:"name" binding:"required,min=1,max=100"`
-	StartTime string   `json:"startTime" binding:"required"`
-	EndTime   string   `json:"endTime" binding:"required"`
-	Days      []string `json:"days" binding:"required,min=1,max=7,dive,oneof=Monday Tuesday Wednesday Thursday Friday Saturday Sunday"`
+	ID        string   `json:"id" binding:"max=64"`
+	Name      string   `json:"name" binding:"max=100"`
+	StartTime string   `json:"startTime" binding:"max=5"`
+	EndTime   string   `json:"endTime" binding:"max=5"`
+	Days      []string `json:"days" binding:"max=7,dive,max=9"`
 }
 
-// SmartScheduleGoals are weekly goal hours; omitted fields fall back to the generator's defaults.
+// SmartScheduleGoals are weekly goal hours (range/step rules are enforced by the analytics service).
 type SmartScheduleGoals struct {
-	DeepWorkHours *float64 `json:"deepWorkHours,omitempty" binding:"omitempty,min=0,max=168"`
-	StudyHours    *float64 `json:"studyHours,omitempty" binding:"omitempty,min=0,max=168"`
-	RestHours     *float64 `json:"restHours,omitempty" binding:"omitempty,min=0,max=168"`
+	DeepWorkHours *float64 `json:"deepWorkHours,omitempty"`
+	StudyHours    *float64 `json:"studyHours,omitempty"`
+	RestHours     *float64 `json:"restHours,omitempty"`
 }
 
 // SmartScheduleRequest is the only body shape forwarded to the Python service.
 type SmartScheduleRequest struct {
 	Commitments []SmartScheduleCommitment `json:"commitments" binding:"max=50,dive"`
-	Goals       *SmartScheduleGoals       `json:"goals" binding:"required"`
+	Goals       *SmartScheduleGoals       `json:"goals"`
 }
 
-var hhmm = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
-
-// decodeSmartSchedule strictly decodes and validates the request body.
+// decodeSmartSchedule strictly decodes the body (unknown fields, wrong types and
+// trailing data are rejected) and enforces size limits before it is re-encoded.
 func decodeSmartSchedule(body io.Reader) (*SmartScheduleRequest, error) {
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
@@ -119,15 +122,24 @@ func decodeSmartSchedule(body io.Reader) (*SmartScheduleRequest, error) {
 	if err := binding.Validator.ValidateStruct(&req); err != nil {
 		return nil, err
 	}
-	for i, c := range req.Commitments {
-		if !hhmm.MatchString(c.StartTime) || !hhmm.MatchString(c.EndTime) {
-			return nil, fmt.Errorf("commitments[%d]: times must be HH:MM between 00:00 and 23:59", i)
-		}
-	}
 	if req.Commitments == nil {
 		req.Commitments = []SmartScheduleCommitment{}
 	}
 	return &req, nil
+}
+
+// relayValidationError passes the analytics service's 422 {error, details} to the client.
+func relayValidationError(c *gin.Context, body io.Reader, limit int64) {
+	var payload struct {
+		Error   string            `json:"error"`
+		Details []json.RawMessage `json:"details"`
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, limit))
+	if err != nil || json.Unmarshal(raw, &payload) != nil || payload.Error == "" {
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Analytics service returned an invalid validation error")
+		return
+	}
+	apierr.JSON(c, http.StatusUnprocessableEntity, apierr.AnalyticsValidationFailed, payload.Error, gin.H{"details": payload.Details})
 }
 
 // upstreamURL builds a Python service URL from a fixed path and server-built query values.
@@ -143,7 +155,7 @@ func (h *AnalyticsHandler) upstreamURL(path string, query url.Values) string {
 func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body []byte) {
 	token, err := h.internalToken(c.MustGet("userID").(uint), userLocation(c).String())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to create analytics request")
 		return
 	}
 
@@ -153,40 +165,47 @@ func (h *AnalyticsHandler) forward(c *gin.Context, method, endpoint string, body
 	}
 	req, err := http.NewRequestWithContext(c.Request.Context(), method, endpoint, rd)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create analytics request"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to create analytics request")
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if id := logging.RequestID(c.Request.Context()); id != "" {
+		req.Header.Set("X-Request-ID", id)
+	}
 	if body != nil {
 		req.Header.Add("Content-Type", "application/json")
 	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to analytics service"})
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Failed to connect to analytics service")
 		return
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		relayValidationError(c, resp.Body, h.maxResponseBytes)
+		return
+	}
 	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analytics service returned an error"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.AnalyticsUnavailable, "Analytics service returned an error")
 		return
 	}
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, h.maxResponseBytes+1))
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to read analytics response"})
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Failed to read analytics response")
 		return
 	}
 	if int64(len(respBody)) > h.maxResponseBytes {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Analytics response too large"})
+		apierr.JSON(c, http.StatusBadGateway, apierr.AnalyticsUnavailable, "Analytics response too large")
 		return
 	}
 
 	// Unmarshal JSON to avoid returning raw string to Gin
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid JSON from analytics service"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.AnalyticsUnavailable, "Invalid JSON from analytics service")
 		return
 	}
 
@@ -212,7 +231,7 @@ func (h *AnalyticsHandler) GetAnalytics(c *gin.Context) {
 	case "month":
 		pythonRoute = "/analytics/monthly"
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "range must be 'week' or 'month'"})
+		apierr.JSON(c, http.StatusBadRequest, apierr.RangeInvalid, "range must be 'week' or 'month'")
 		return
 	}
 
@@ -232,15 +251,23 @@ func (h *AnalyticsHandler) GetToday(c *gin.Context) {
 	h.forward(c, http.MethodGet, h.upstreamURL("/analytics/today", nil), nil)
 }
 
-// GetFocusPatterns proxies the focus-patterns endpoint
+// GetFocusPatterns godoc
+// @Summary      Focus patterns
+// @Description  Heatmap, weekday scores, deep-work slots and distraction trend over the last N days, computed by the analytics service.
+// @Tags         Analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Param        days  query  int  false  "Days to cover (7-365, defaults to 30)"  example(30)
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  ErrorResponse
+// @Failure      502   {object}  ErrorResponse
+// @Router       /analytics/focus-patterns [get]
 func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 	days := defaultFocusDays
 	if raw := c.Query("days"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < minFocusDays || n > maxFocusDays {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("days must be an integer between %d and %d", minFocusDays, maxFocusDays),
-			})
+			apierr.JSON(c, http.StatusBadRequest, apierr.DaysInvalid, fmt.Sprintf("days must be an integer between %d and %d", minFocusDays, maxFocusDays))
 			return
 		}
 		days = n
@@ -266,17 +293,14 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 func (h *AnalyticsHandler) GenerateSmartSchedule(c *gin.Context) {
 	req, err := decodeSmartSchedule(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Validation failed",
-			"details": err.Error(),
-		})
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
 
 	// Re-encode the validated struct; the client's raw body is never forwarded.
 	body, err := json.Marshal(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to create request")
 		return
 	}
 

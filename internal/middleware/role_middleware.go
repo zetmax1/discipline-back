@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"discipline-backend/internal/apierr"
 )
 
 // RequireRole returns a middleware that only allows users with the specified role.
@@ -12,16 +14,12 @@ func RequireRole(role string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole, exists := c.Get("userRole")
 		if !exists {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Authentication required",
-			})
+			apierr.Abort(c, http.StatusUnauthorized, apierr.AuthRequired, "Authentication required")
 			return
 		}
 
 		if userRole.(string) != role {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "Insufficient permissions. Required role: " + role,
-			})
+			apierr.Abort(c, http.StatusForbidden, apierr.Forbidden, "Insufficient permissions. Required role: "+role)
 			return
 		}
 

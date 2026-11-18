@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"discipline-backend/internal/events"
 	"discipline-backend/internal/models"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/services"
@@ -56,7 +57,7 @@ func newTaskEnv(t *testing.T) *taskEnv {
 		}
 		env.ids[i] = u.ID
 	}
-	h := NewTaskHandler(services.NewTaskService(repositories.NewTaskRepository(gdb)))
+	h := NewTaskHandler(services.NewTaskServiceWithEvents(repositories.NewTaskRepository(gdb), events.NewRecorder(gdb)))
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -69,7 +70,10 @@ func newTaskEnv(t *testing.T) *taskEnv {
 	r.POST("/tasks", h.CreateTask)
 	r.POST("/tasks/bulk", h.BulkCreateTasks)
 	r.PUT("/tasks/:id", h.UpdateTask)
+	r.POST("/tasks/:id/check-in", h.CheckIn)
+	r.POST("/tasks/:id/move", h.MoveTask)
 	r.POST("/tasks/:id/distractions", h.AdjustDistractions)
+	r.PUT("/tasks/plan", h.SavePlan)
 	env.r = r
 	return env
 }
@@ -178,7 +182,7 @@ func TestUpdateTask_RejectsInvalidAndOverlapping(t *testing.T) {
 	if c := put(b, `{"endTime":"10:30"}`); c != http.StatusBadRequest {
 		t.Fatalf("end before start on update must be 400, got %d", c)
 	}
-	for _, body := range []string{`{"status":"done"}`, `{"energy":0}`, `{"distractions":101}`, `{"category":"nap"}`, `{"date":"2026-02-30"}`, `{"name":""}`} {
+	for _, body := range []string{`{"status":"moved"}`, `{"energy":0}`, `{"distractions":101}`, `{"category":"nap"}`, `{"date":"2026-02-30"}`, `{"name":""}`} {
 		if c := put(a, body); c != http.StatusBadRequest {
 			t.Errorf("%s: expected 400, got %d", body, c)
 		}
@@ -224,7 +228,7 @@ func TestUpdateTask_WritesOnlyProvidedFields(t *testing.T) {
 	}
 	var stored models.Task
 	e.db.First(&stored, id)
-	if stored.Distractions != 7 || stored.Status != "completed" {
+	if stored.Distractions != 7 || stored.Status != "done" {
 		t.Fatalf("expected distractions 7 and completed, got %+v", stored)
 	}
 }
@@ -263,5 +267,40 @@ func TestBulkCreate_ValidatesEveryItemAndOverlaps(t *testing.T) {
 	e.db.Model(&models.Task{}).Count(&n)
 	if n != 1 {
 		t.Fatalf("a rejected batch must insert nothing, found %d", n)
+	}
+}
+
+func TestOverlap_SkippedBlocksDoNotOccupyTime(t *testing.T) {
+	e := newTaskEnv(t)
+	put := func(id uint, body string) int {
+		return doRequest(e.r, http.MethodPut, fmt.Sprintf("/tasks/%d", id), body).Code
+	}
+	_, a := e.create(t, taskJSON("A", "09:00", "10:00", "2026-10-29"))
+	if c := put(a, `{"status":"skipped"}`); c != http.StatusOK {
+		t.Fatalf("skip A: %d", c)
+	}
+	code, b := e.create(t, taskJSON("B", "09:30", "10:30", "2026-10-29"))
+	if code != http.StatusCreated {
+		t.Fatalf("a skipped block must not block a new one, got %d", code)
+	}
+	if c := put(a, `{"startTime":"09:15","endTime":"10:15"}`); c != http.StatusOK {
+		t.Fatalf("moving a skipped block over B must be allowed, got %d", c)
+	}
+	if c := put(a, `{"status":"pending"}`); c != http.StatusConflict {
+		t.Fatalf("un-skipping A while it overlaps B must be 409, got %d", c)
+	}
+	var stored models.Task
+	e.db.First(&stored, a)
+	if stored.Status != models.StatusSkipped {
+		t.Fatalf("a rejected un-skip must leave A skipped, got %q", stored.Status)
+	}
+	if c := put(b, `{"status":"skipped"}`); c != http.StatusOK {
+		t.Fatalf("skip B: %d", c)
+	}
+	if c := put(a, `{"status":"completed"}`); c != http.StatusOK {
+		t.Fatalf("un-skipping A once B is skipped must succeed, got %d", c)
+	}
+	if code, _ := e.create(t, taskJSON("C", "09:45", "10:30", "2026-10-29")); code != http.StatusConflict {
+		t.Fatalf("A is no longer skipped, so C must conflict with it, got %d", code)
 	}
 }

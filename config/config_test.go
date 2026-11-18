@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,8 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("DB_PASSWORD", "db-password-for-tests")
 	t.Setenv("INTERNAL_JWT_SECRET", "fedcba9876543210fedcba9876543210")
 	t.Setenv("PYTHON_SERVICE_URL", "http://discipline-py.railway.internal:8082")
+	t.Setenv("REDIS_URL", "redis://redis.railway.internal:6379/0")
+	t.Setenv("TURNSTILE_SECRET", "turnstile-secret-for-tests")
 }
 
 func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
@@ -35,7 +39,7 @@ func TestLoad_SucceedsWithRequiredSecrets(t *testing.T) {
 }
 
 func TestLoad_FailsWhenSecretMissing(t *testing.T) {
-	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD", "INTERNAL_JWT_SECRET", "PYTHON_SERVICE_URL"} {
+	for _, name := range []string{"JWT_SECRET", "DB_PASSWORD", "INTERNAL_JWT_SECRET", "PYTHON_SERVICE_URL", "REDIS_URL", "TURNSTILE_SECRET"} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)
 			t.Setenv(name, "")
@@ -227,7 +231,7 @@ func TestLoad_AppEnvAndDocsFlags(t *testing.T) {
 
 func TestGormLogger_WarnLevelAndQuiet(t *testing.T) {
 	var buf bytes.Buffer
-	l := newGormLogger(&buf)
+	l := newGormLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
 	ctx := context.Background()
 
 	l.Info(ctx, "info message %s", "x")
@@ -240,8 +244,12 @@ func TestGormLogger_WarnLevelAndQuiet(t *testing.T) {
 	}
 
 	l.Warn(ctx, "warn message")
-	if !strings.Contains(buf.String(), "warn message") {
-		t.Fatal("warnings must still be logged")
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("GORM must log through the JSON logger, got %q", buf.String())
+	}
+	if msg, _ := line["msg"].(string); !strings.Contains(msg, "warn message") || line["level"] != "WARN" {
+		t.Fatalf("warnings must still be logged, got %v", line)
 	}
 }
 
@@ -254,5 +262,64 @@ func TestConfigurePool(t *testing.T) {
 	configurePool(db)
 	if got := db.Stats().MaxOpenConnections; got != 10 {
 		t.Fatalf("MaxOpenConns = %d, want 10", got)
+	}
+}
+
+func TestLoad_RejectsInvalidRedisURL(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("REDIS_URL", "localhost:6379")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REDIS_URL") {
+		t.Fatalf("expected a REDIS_URL error, got %v", err)
+	}
+}
+
+func TestLoad_IPDebugOffUnlessTrue(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "false": false, "1": false, "true": true, " TRUE ": true} {
+		setRequiredEnv(t)
+		t.Setenv("ENABLE_IP_DEBUG", value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.EnableIPDebug != want {
+			t.Errorf("ENABLE_IP_DEBUG=%q: got %v, want %v", value, cfg.EnableIPDebug, want)
+		}
+	}
+}
+
+func TestEnabledFeatures_OnlyFeatureIDsSetToTrue(t *testing.T) {
+	got := EnabledFeatures([]string{
+		"FEATURE_F1=true",
+		"FEATURE_F12A=TRUE",
+		"FEATURE_F9B= true ",
+		"FEATURE_F3=false",
+		"FEATURE_F4=1",
+		"FEATURE_F5=",
+		"FEATURE_SOMETHING=true", // not an F<id>
+		"FEATURE_f6=true",        // ids are upper case
+		"NOT_FEATURE_F7=true",
+		"PATH=/usr/bin",
+	})
+	want := []string{"F1", "F12A", "F9B"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}
+
+func TestEnabledFeatures_NoneIsEmptyNotNil(t *testing.T) {
+	if got := EnabledFeatures(nil); got == nil || len(got) != 0 {
+		t.Fatalf("want an empty, non-nil list, got %#v", got)
+	}
+}
+
+func TestLoad_ReadsFeatureFlags(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("FEATURE_F1", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Features) != 1 || cfg.Features[0] != "F1" {
+		t.Fatalf("want [F1], got %v", cfg.Features)
 	}
 }

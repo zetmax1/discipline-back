@@ -1,0 +1,19 @@
+# gitleaks: default rules plus one narrow allowlist for the fixed dummy secrets
+# that tests use. Only these exact values are ignored, wherever they appear (they
+# are not valid anywhere); any other secret, in test files too, still fails.
+# Note: a path entry in a global allowlist skips whole files before scanning, so
+# allowlisting test paths would hide real secrets in them. Do not add paths here.
+title = "discipline-back gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Dummy secrets used only by tests; never valid anywhere"
+regexTarget = "secret"
+regexes = [
+  '''^jwt-secret-for-tests-0123456789abcdef$''',
+  '''^internal-secret-for-tests-0123456789$''',
+  '''^0123456789abcdef0123456789abcdef$''',
+  '''^fedcba9876543210fedcba9876543210$''',
+]

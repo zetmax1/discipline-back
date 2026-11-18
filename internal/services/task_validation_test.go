@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/models"
 )
 
@@ -17,25 +18,26 @@ func TestValidateNewTask(t *testing.T) {
 		name string
 		edit func(*models.Task)
 		ok   bool
+		code apierr.Code // set when !ok
 	}{
-		{"valid", func(*models.Task) {}, true},
-		{"ends at 24:00", func(t *models.Task) { t.StartTime, t.EndTime = "23:00", "24:00" }, true},
-		{"impossible date", func(t *models.Task) { t.Date = "2026-02-30" }, false},
-		{"non-ISO date", func(t *models.Task) { t.Date = "29.10.2026" }, false},
-		{"unpadded time", func(t *models.Task) { t.StartTime = "9:00" }, false},
-		{"12h time", func(t *models.Task) { t.StartTime = "09:00 AM" }, false},
-		{"end equals start", func(t *models.Task) { t.EndTime = "09:00" }, false},
-		{"end before start", func(t *models.Task) { t.StartTime, t.EndTime = "10:00", "09:00" }, false},
-		{"crosses midnight", func(t *models.Task) { t.StartTime, t.EndTime = "23:00", "01:00" }, false},
-		{"end after 24:00", func(t *models.Task) { t.EndTime = "24:30" }, false},
-		{"start at 24:00", func(t *models.Task) { t.StartTime, t.EndTime = "24:00", "24:00" }, false},
-		{"unknown category", func(t *models.Task) { t.Category = "nap" }, false},
-		{"energy 0", func(t *models.Task) { t.Energy = 0 }, false},
-		{"energy 6", func(t *models.Task) { t.Energy = 6 }, false},
-		{"empty name", func(t *models.Task) { t.Name = "" }, false},
-		{"blank name", func(t *models.Task) { t.Name = "   " }, false},
-		{"120-char name", func(t *models.Task) { t.Name = strings.Repeat("é", 120) }, true},
-		{"121-char name", func(t *models.Task) { t.Name = strings.Repeat("a", 121) }, false},
+		{"valid", func(*models.Task) {}, true, ""},
+		{"ends at 24:00", func(t *models.Task) { t.StartTime, t.EndTime = "23:00", "24:00" }, true, ""},
+		{"impossible date", func(t *models.Task) { t.Date = "2026-02-30" }, false, apierr.TaskDateInvalid},
+		{"non-ISO date", func(t *models.Task) { t.Date = "29.10.2026" }, false, apierr.TaskDateInvalid},
+		{"unpadded time", func(t *models.Task) { t.StartTime = "9:00" }, false, apierr.TaskTimeInvalid},
+		{"12h time", func(t *models.Task) { t.StartTime = "09:00 AM" }, false, apierr.TaskTimeInvalid},
+		{"end equals start", func(t *models.Task) { t.EndTime = "09:00" }, false, apierr.TaskEndBeforeStart},
+		{"end before start", func(t *models.Task) { t.StartTime, t.EndTime = "10:00", "09:00" }, false, apierr.TaskEndBeforeStart},
+		{"crosses midnight", func(t *models.Task) { t.StartTime, t.EndTime = "23:00", "01:00" }, false, apierr.TaskEndBeforeStart},
+		{"end after 24:00", func(t *models.Task) { t.EndTime = "24:30" }, false, apierr.TaskTimeInvalid},
+		{"start at 24:00", func(t *models.Task) { t.StartTime, t.EndTime = "24:00", "24:00" }, false, apierr.TaskEndBeforeStart},
+		{"unknown category", func(t *models.Task) { t.Category = "nap" }, false, apierr.TaskCategoryInvalid},
+		{"energy 0", func(t *models.Task) { t.Energy = 0 }, false, apierr.TaskEnergyInvalid},
+		{"energy 6", func(t *models.Task) { t.Energy = 6 }, false, apierr.TaskEnergyInvalid},
+		{"empty name", func(t *models.Task) { t.Name = "" }, false, apierr.TaskNameLength},
+		{"blank name", func(t *models.Task) { t.Name = "   " }, false, apierr.TaskNameLength},
+		{"120-char name", func(t *models.Task) { t.Name = strings.Repeat("é", 120) }, true, ""},
+		{"121-char name", func(t *models.Task) { t.Name = strings.Repeat("a", 121) }, false, apierr.TaskNameLength},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,6 +49,9 @@ func TestValidateNewTask(t *testing.T) {
 			}
 			if err != nil && !errors.Is(err, ErrInvalidTask) {
 				t.Fatalf("validation errors must wrap ErrInvalidTask, got %v", err)
+			}
+			if code, _ := apierr.CodeOf(err); err != nil && code != tc.code {
+				t.Fatalf("want code %q, got %q (%v)", tc.code, code, err)
 			}
 		})
 	}
@@ -66,7 +71,7 @@ func TestMergeTaskUpdate(t *testing.T) {
 		timesMove bool
 	}{
 		{"status only", TaskUpdate{Status: ptr("completed")}, true, []string{"status"}, false},
-		{"bad status", TaskUpdate{Status: ptr("done")}, false, nil, false},
+		{"bad status", TaskUpdate{Status: ptr("moved")}, false, nil, false},
 		{"distractions 100", TaskUpdate{Distractions: ptr(100)}, true, []string{"distractions"}, false},
 		{"distractions 101", TaskUpdate{Distractions: ptr(101)}, false, nil, false},
 		{"distractions -1", TaskUpdate{Distractions: ptr(-1)}, false, nil, false},
@@ -110,5 +115,14 @@ func TestMergeTaskUpdate_LegacyInvalidRowCanStillChangeStatus(t *testing.T) {
 	legacy.StartTime, legacy.EndTime = "10:00", "09:00" // stored before validation existed
 	if _, _, _, err := mergeTaskUpdate(legacy, TaskUpdate{Status: ptr("completed")}); err != nil {
 		t.Fatalf("a status-only update must not re-validate untouched times: %v", err)
+	}
+}
+
+func TestMergeTaskUpdate_MapsLegacyStatuses(t *testing.T) {
+	for legacy, want := range map[string]string{"pending": models.StatusPlanned, "completed": models.StatusDone} {
+		cols, merged, _, err := mergeTaskUpdate(validTask(), TaskUpdate{Status: ptr(legacy)})
+		if err != nil || cols["status"] != want || merged.Status != want {
+			t.Fatalf("%s: want %s, got %v %v %v", legacy, want, cols, merged.Status, err)
+		}
 	}
 }

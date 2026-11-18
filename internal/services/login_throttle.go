@@ -1,122 +1,119 @@
 package services
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
-	"sync"
 	"time"
+
+	"discipline-backend/internal/ratelimit"
 )
 
-// Login throttling policy: 5 failures within 15 minutes lock the email for 15 minutes.
+// Login throttling policy. Failures are counted in sliding 15-minute windows:
+//   - per (email, IP): failures 1-3 cost nothing; after failure n >= 4 the next
+//     attempt waits 2^(n-3) seconds (2, 4, 8 ...), at most 15 minutes;
+//   - per IP: 30 failures, whatever the emails, block that IP;
+//   - per email: from 3 failures (any IPs) every attempt needs a captcha.
+//
+// Nothing locks an account: an attacker can only slow their own (email, IP) pair
+// and IP, and make the owner solve a captcha.
 const (
-	loginMaxFailures   = 5
 	loginFailureWindow = 15 * time.Minute
-	loginLockDuration  = 15 * time.Minute
+	loginFreeFailures  = 3
+	loginMaxDelay      = 15 * time.Minute
+	loginIPMaxFailures = 30
+	loginCaptchaAfter  = 3
 )
 
-type loginAttempts struct {
-	failures    int
-	windowStart time.Time
-	lockedUntil time.Time
+// LoginState is what the throttle requires before a login attempt may proceed.
+type LoginState struct {
+	// RetryAfter > 0 means refuse the attempt (429) for that long.
+	RetryAfter time.Duration
+	// CaptchaRequired means the attempt needs a valid captcha token.
+	CaptchaRequired bool
 }
 
-// LoginThrottle tracks failed logins per email in memory. It counts attempts for
-// any email, existing or not, so the lockout does not reveal which accounts exist.
-// State is per process and resets on restart.
+// LoginThrottle tracks failed logins in a shared store. It counts attempts for
+// any email, existing or not, so its answers do not reveal which accounts exist.
 type LoginThrottle struct {
-	mu         sync.Mutex
-	entries    map[string]*loginAttempts
-	maxEntries int
-	now        func() time.Time
+	store ratelimit.Store
+	now   func() time.Time
 }
 
-// NewLoginThrottle creates a throttle that tracks at most maxEntries emails.
-func NewLoginThrottle(maxEntries int) *LoginThrottle {
-	return &LoginThrottle{
-		entries:    make(map[string]*loginAttempts),
-		maxEntries: maxEntries,
-		now:        time.Now,
+// NewLoginThrottle creates a throttle backed by store.
+func NewLoginThrottle(store ratelimit.Store) *LoginThrottle {
+	return &LoginThrottle{store: store, now: time.Now}
+}
+
+// emailID normalizes an email and hashes it, so the store never holds addresses.
+func emailID(email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(sum[:])
+}
+
+func emailIPKey(email, ip string) string { return "login:fail:emailip:" + emailID(email) + ":" + ip }
+func ipKey(ip string) string             { return "login:fail:ip:" + ip }
+func emailKey(email string) string       { return "login:fail:email:" + emailID(email) }
+
+// delayAfter is the wait imposed after the n-th failure of one (email, IP) pair.
+func delayAfter(n int) time.Duration {
+	if n <= loginFreeFailures {
+		return 0
 	}
-}
-
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-// Locked reports whether the email is locked and how long until it unlocks.
-func (t *LoginThrottle) Locked(email string) (bool, time.Duration) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	a, ok := t.entries[normalizeEmail(email)]
-	if !ok {
-		return false, 0
+	shift := n - loginFreeFailures
+	if shift >= 30 {
+		return loginMaxDelay
 	}
-	if remaining := a.lockedUntil.Sub(t.now()); remaining > 0 {
-		return true, remaining
-	}
-	return false, 0
+	return min(time.Duration(1<<shift)*time.Second, loginMaxDelay)
 }
 
-// RecordFailure counts a failed login and locks the email once the limit is reached.
-func (t *LoginThrottle) RecordFailure(email string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	key := normalizeEmail(email)
+// Check reports whether an attempt for email from ip must wait or needs a captcha.
+func (t *LoginThrottle) Check(ctx context.Context, email, ip string) (LoginState, error) {
+	var st LoginState
 	now := t.now()
 
-	a, ok := t.entries[key]
-	if !ok {
-		if !t.makeRoom(now) {
-			return
-		}
-		a = &loginAttempts{}
-		t.entries[key] = a
+	pair, err := t.store.Events(ctx, emailIPKey(email, ip), loginFailureWindow)
+	if err != nil {
+		return st, err
 	}
-	if now.Sub(a.windowStart) > loginFailureWindow || (!a.lockedUntil.IsZero() && !now.Before(a.lockedUntil)) {
-		*a = loginAttempts{windowStart: now}
+	if n := len(pair); n > 0 {
+		st.RetryAfter = max(0, pair[n-1].Add(delayAfter(n)).Sub(now))
 	}
-	a.failures++
-	if a.failures >= loginMaxFailures {
-		a.lockedUntil = now.Add(loginLockDuration)
+
+	byIP, err := t.store.Events(ctx, ipKey(ip), loginFailureWindow)
+	if err != nil {
+		return st, err
 	}
+	if n := len(byIP); n >= loginIPMaxFailures {
+		// Blocked until enough failures leave the window to drop below the cap.
+		st.RetryAfter = max(st.RetryAfter, byIP[n-loginIPMaxFailures].Add(loginFailureWindow).Sub(now))
+	}
+
+	byEmail, err := t.store.Events(ctx, emailKey(email), loginFailureWindow)
+	if err != nil {
+		return st, err
+	}
+	st.CaptchaRequired = len(byEmail) >= loginCaptchaAfter
+	return st, nil
 }
 
-// Reset clears the failure count after a successful login.
-func (t *LoginThrottle) Reset(email string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.entries, normalizeEmail(email))
-}
-
-// makeRoom frees space for a new entry: expired entries go first, then the oldest
-// unlocked one. Active locks are never evicted. Must be called with mu held.
-func (t *LoginThrottle) makeRoom(now time.Time) bool {
-	if len(t.entries) < t.maxEntries {
-		return true
-	}
-	var oldestKey string
-	var oldest time.Time
-	for k, a := range t.entries {
-		locked := now.Before(a.lockedUntil)
-		if !locked && now.Sub(a.windowStart) > loginFailureWindow {
-			delete(t.entries, k)
-			continue
-		}
-		if !locked && (oldestKey == "" || a.windowStart.Before(oldest)) {
-			oldestKey, oldest = k, a.windowStart
+// RecordFailure counts a failed login and reports whether the email now needs a captcha.
+func (t *LoginThrottle) RecordFailure(ctx context.Context, email, ip string) (bool, error) {
+	for _, key := range []string{emailIPKey(email, ip), ipKey(ip), emailKey(email)} {
+		if err := t.store.Record(ctx, key, loginFailureWindow); err != nil {
+			return false, err
 		}
 	}
-	if len(t.entries) < t.maxEntries {
-		return true
+	byEmail, err := t.store.Events(ctx, emailKey(email), loginFailureWindow)
+	if err != nil {
+		return false, err
 	}
-	if oldestKey == "" {
-		return false
-	}
-	delete(t.entries, oldestKey)
-	return true
+	return len(byEmail) >= loginCaptchaAfter, nil
 }
 
-func (t *LoginThrottle) size() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return len(t.entries)
+// RecordSuccess clears the (email, IP) delay. The per-IP and per-email counts
+// stay, so a success cannot be used to reset an attack's budget.
+func (t *LoginThrottle) RecordSuccess(ctx context.Context, email, ip string) error {
+	return t.store.Clear(ctx, emailIPKey(email, ip))
 }

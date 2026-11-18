@@ -18,7 +18,7 @@ func TestFetchEnglishDefinition_RejectsOversizeResponse(t *testing.T) {
 	dictionaryAPIBaseURL = srv.URL + "/"
 	t.Cleanup(func() { dictionaryAPIBaseURL = old })
 
-	if def := (&vocabService{}).fetchEnglishDefinition("x"); def != nil {
+	if def := (&vocabService{}).fetchEnglishDefinition("x", "noun"); def != nil {
 		t.Fatal("an oversize dictionary response must be rejected")
 	}
 }
@@ -33,7 +33,7 @@ func TestFetchEnglishDefinition_ParsesNormalResponse(t *testing.T) {
 	dictionaryAPIBaseURL = srv.URL + "/"
 	t.Cleanup(func() { dictionaryAPIBaseURL = old })
 
-	def := (&vocabService{}).fetchEnglishDefinition("x")
+	def := (&vocabService{}).fetchEnglishDefinition("x", "noun")
 	if def == nil || def.Definition != "a thing" {
 		t.Fatalf("expected parsed definition, got %+v", def)
 	}

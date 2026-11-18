@@ -75,6 +75,12 @@ Swagger documentation is available at `/swagger/index.html` when the server runs
 
 The API is documented using Swagger. Start the server with `ENABLE_DOCS=true`, then visit `http://localhost:8080/swagger/index.html` to view the interactive API documentation.
 
+`docs/` is generated from the handler annotations. After changing a route or its annotations, regenerate it (a test fails while it is stale):
+
+```bash
+go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go -o docs
+```
+
 ## Project Structure
 
 ```
@@ -138,14 +144,30 @@ go run ./cmd/migrate -database "postgres://..." down   # roll back one step
 
 ## Integration tests
 
-Database tests run against a throwaway Postgres and are skipped without `TEST_DATABASE_URL`:
+Database and Redis tests run against throwaway containers and are skipped without
+`TEST_DATABASE_URL` / `TEST_REDIS_URL` (`make check` fails if anything is skipped):
 
 ```bash
 docker compose -f docker-compose.test.yml up -d --wait
 export TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:55432/postgres?sslmode=disable'
+export TEST_REDIS_URL='redis://127.0.0.1:56379/0'
 go test -race ./...
 docker compose -f docker-compose.test.yml down
 ```
+
+## Contract tests
+
+Handler tests check responses the web reads against the JSON Schemas the web generates
+(`discipline/contracts/<file>.schema.json`) with `contracttest.Validate(t, file, name, body)`;
+see `internal/handlers/feature_handler_test.go`. The schemas are read from `../discipline/contracts`
+next to this repo, or from `CONTRACTS_DIR`. A missing schema fails the test (it never skips).
+
+## Checks
+
+`make check` runs go vet, staticcheck, the tests above (it starts the containers itself),
+govulncheck, gosec and gitleaks over the full history. Needs Go and Docker.
+gosec findings reviewed as false positives are listed in `.gosec-baseline.json`; any other
+finding fails. `make test-down` stops the test containers.
 
 ## Contributing
 

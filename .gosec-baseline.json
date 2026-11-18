@@ -1,0 +1,32 @@
+[
+  {
+    "rule_id": "G404",
+    "file": "internal/handlers/quote_handler.go",
+    "code": "cacheTTL: 2*time.Hour + time.Duration(rand.Intn(60))*time.Minute, // 2-3 hours",
+    "reason": "Jitter on the quote cache TTL; not security-sensitive."
+  },
+  {
+    "rule_id": "G404",
+    "file": "internal/handlers/quote_handler.go",
+    "code": "h.cacheTTL = 2*time.Hour + time.Duration(rand.Intn(60))*time.Minute",
+    "reason": "Jitter on the quote cache TTL; not security-sensitive."
+  },
+  {
+    "rule_id": "G404",
+    "file": "internal/handlers/quote_handler.go",
+    "code": "quote := fallbackQuotes[rand.Intn(len(fallbackQuotes))]",
+    "reason": "Picks a fallback quote to display; not security-sensitive."
+  },
+  {
+    "rule_id": "G404",
+    "file": "internal/services/vocab_service.go",
+    "code": "r := rand.New(rand.NewSource(int64(h)))",
+    "reason": "Deterministic seeded pick of the day's word; must be reproducible, not secret."
+  },
+  {
+    "rule_id": "G101",
+    "file": "internal/apierr/apierr.go",
+    "code": "InvalidCredentials       Code = \"invalid_credentials\"",
+    "reason": "Error code name for a failed login (the value is the public code string), not a credential."
+  }
+]

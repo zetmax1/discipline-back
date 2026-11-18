@@ -1,121 +1,92 @@
 package middleware
 
 import (
+	"log/slog"
+	"math"
 	"net/http"
-	"sync"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/time/rate"
+	"github.com/golang-jwt/jwt/v5"
+
+	"discipline-backend/internal/apierr"
+	"discipline-backend/internal/ratelimit"
 )
 
-// client represents a rate limited client.
-type client struct {
-	limiter  *rate.Limiter
-	lastSeen time.Time
+// Policy is a sliding-window limit: at most Limit requests per Window and key.
+// FailClosed answers 503 while the store is unreachable; otherwise requests pass.
+type Policy struct {
+	Name       string
+	Limit      int
+	Window     time.Duration
+	FailClosed bool
 }
 
-// defaultMaxClients caps how many client IPs a limiter tracks at once.
-const defaultMaxClients = 10000
+// Rate limit policies (sliding windows shared through Redis). Global counts per
+// user when the request carries a valid token and per IP otherwise; Auth counts
+// per IP; Analytics counts per authenticated user.
+var (
+	GlobalPolicy    = Policy{Name: "global", Limit: 100, Window: time.Minute}
+	AuthPolicy      = Policy{Name: "auth", Limit: 5, Window: time.Minute, FailClosed: true}
+	AnalyticsPolicy = Policy{Name: "analytics", Limit: 10, Window: time.Minute} // database-heavy
+)
 
-// rateLimiter keeps one token bucket per client IP, up to maxClients entries.
-// Clients beyond the cap share a single overflow bucket instead of growing the map.
-type rateLimiter struct {
-	mu         sync.Mutex
-	clients    map[string]*client
-	overflow   *rate.Limiter
-	r          rate.Limit
-	b          int
-	maxClients int
+// KeyFunc names the client a request is counted against.
+type KeyFunc func(c *gin.Context) string
+
+// ByClientIP counts requests per client IP (see ConfigureClientIP).
+func ByClientIP(c *gin.Context) string { return "ip:" + c.ClientIP() }
+
+// ByUserID counts requests per authenticated user; it must run after AuthMiddleware.
+func ByUserID(c *gin.Context) string {
+	return "user:" + strconv.FormatUint(uint64(c.MustGet("userID").(uint)), 10)
 }
 
-func newRateLimiter(r rate.Limit, b int, maxClients int) *rateLimiter {
-	return &rateLimiter{
-		clients:    make(map[string]*client),
-		overflow:   rate.NewLimiter(r, b),
-		r:          r,
-		b:          b,
-		maxClients: maxClients,
-	}
-}
-
-// limiterFor returns the bucket for ip, creating one if there is room.
-func (rl *rateLimiter) limiterFor(ip string) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	if c, found := rl.clients[ip]; found {
-		c.lastSeen = time.Now()
-		return c.limiter
-	}
-	if len(rl.clients) >= rl.maxClients {
-		rl.pruneLocked(time.Minute)
-	}
-	if len(rl.clients) >= rl.maxClients {
-		return rl.overflow
-	}
-	c := &client{limiter: rate.NewLimiter(rl.r, rl.b), lastSeen: time.Now()}
-	rl.clients[ip] = c
-	return c.limiter
-}
-
-// pruneLocked removes clients idle for longer than maxIdle. Must be called with mu held.
-func (rl *rateLimiter) pruneLocked(maxIdle time.Duration) {
-	for ip, c := range rl.clients {
-		if time.Since(c.lastSeen) > maxIdle {
-			delete(rl.clients, ip)
+// ByUserOrIP counts requests per user when they carry a validly signed, unexpired
+// access token, and per client IP otherwise. It checks only the signature (no
+// database), so it can run before routing; AuthMiddleware still decides access.
+func ByUserOrIP(jwtSecret string) KeyFunc {
+	return func(c *gin.Context) string {
+		scheme, raw, ok := strings.Cut(c.GetHeader("Authorization"), " ")
+		if ok && strings.EqualFold(scheme, "bearer") {
+			token, err := jwt.Parse(raw, hmacKey(jwtSecret))
+			if err == nil && token.Valid {
+				if claims, ok := token.Claims.(jwt.MapClaims); ok {
+					if id, ok := claims["user_id"].(float64); ok && id >= 1 {
+						return "user:" + strconv.FormatUint(uint64(id), 10)
+					}
+				}
+			}
 		}
+		return ByClientIP(c)
 	}
 }
 
-func (rl *rateLimiter) size() int {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	return len(rl.clients)
+// RetryAfterSeconds rounds a wait up to whole seconds, at least 1.
+func RetryAfterSeconds(d time.Duration) string {
+	return strconv.Itoa(max(1, int(math.Ceil(d.Seconds()))))
 }
 
-func (rl *rateLimiter) handler() gin.HandlerFunc {
+// RateLimit enforces p per key, answering 429 with Retry-After when exceeded.
+func RateLimit(store ratelimit.Store, p Policy, key KeyFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !rl.limiterFor(c.ClientIP()).Allow() {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many requests. Please try again later.",
-			})
+		allowed, retryAfter, err := store.Hit(c.Request.Context(), "rl:"+p.Name+":"+key(c), p.Limit, p.Window)
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "rate limit store unavailable", "policy", p.Name, "error", err)
+			if p.FailClosed {
+				apierr.Abort(c, http.StatusServiceUnavailable, apierr.ServiceUnavailable, "Service temporarily unavailable. Please try again shortly.")
+				return
+			}
+			c.Next()
 			return
 		}
-
+		if !allowed {
+			c.Header("Retry-After", RetryAfterSeconds(retryAfter))
+			apierr.Abort(c, http.StatusTooManyRequests, apierr.RateLimited, "Too many requests. Please try again later.")
+			return
+		}
 		c.Next()
 	}
-}
-
-// RateLimiter returns a middleware that limits requests by IP.
-// r is the rate in requests per second, b is the burst size.
-func RateLimiter(r rate.Limit, b int) gin.HandlerFunc {
-	rl := newRateLimiter(r, b, defaultMaxClients)
-
-	// Cleanup stale clients periodically
-	go func() {
-		for {
-			time.Sleep(time.Minute)
-			rl.mu.Lock()
-			rl.pruneLocked(3 * time.Minute)
-			rl.mu.Unlock()
-		}
-	}()
-
-	return rl.handler()
-}
-
-// GlobalRateLimiter allows 100 requests per minute (~1.6 per sec) with a burst of 20
-func GlobalRateLimiter() gin.HandlerFunc {
-	return RateLimiter(rate.Every(time.Minute/100), 20)
-}
-
-// AuthRateLimiter allows 5 requests per minute with a burst of 5
-func AuthRateLimiter() gin.HandlerFunc {
-	return RateLimiter(rate.Every(time.Minute/5), 5)
-}
-
-// AnalyticsRateLimiter allows 10 requests per minute with a burst of 5
-// Analytics queries can be database-heavy, so they have a stricter limit than global.
-func AnalyticsRateLimiter() gin.HandlerFunc {
-	return RateLimiter(rate.Every(time.Minute/10), 5)
 }

@@ -6,20 +6,22 @@ import (
 	"log"
 	"net"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 )
 
 // Config holds all configuration for the application.
 type Config struct {
-	DBHost       string
-	DBPort       string
-	DBUser       string
-	DBPassword   string
-	DBName       string
-	DBSSLMode    string
+	DBHost         string
+	DBPort         string
+	DBUser         string
+	DBPassword     string
+	DBName         string
+	DBSSLMode      string
 	JWTSecret      string
 	Port           string
 	AllowedOrigins string
@@ -34,6 +36,17 @@ type Config struct {
 	AppEnv string
 	// EnableDocs serves Swagger UI when ENABLE_DOCS=true.
 	EnableDocs bool
+	// EnableIPDebug serves GET /debug/ip when ENABLE_IP_DEBUG=true (staging only).
+	EnableIPDebug bool
+	// TurnstileSecret verifies Cloudflare Turnstile tokens on registration and throttled logins.
+	TurnstileSecret string
+	// SentryDSN enables error reporting to Sentry when set; SentryEnvironment labels events.
+	SentryDSN         string
+	SentryEnvironment string
+	// RedisURL holds the shared rate-limit and login-throttle state (redis:// or rediss://).
+	RedisURL string
+	// Features are the ids switched on with FEATURE_<id>=true, e.g. FEATURE_F12A → "F12A".
+	Features []string
 }
 
 // GinMode returns gin's debug mode only when APP_ENV=development.
@@ -72,6 +85,13 @@ func Load() (*Config, error) {
 		problems = append(problems, "INTERNAL_JWT_SECRET must be different from JWT_SECRET")
 	}
 	pythonServiceURL := requireEnv("PYTHON_SERVICE_URL", &problems)
+	redisURL := requireEnv("REDIS_URL", &problems)
+	turnstileSecret := requireEnv("TURNSTILE_SECRET", &problems)
+	if redisURL != "" {
+		if _, err := redis.ParseURL(redisURL); err != nil {
+			problems = append(problems, "REDIS_URL must be a redis:// or rediss:// URL")
+		}
+	}
 	dbSSLMode := strings.TrimSpace(os.Getenv("DB_SSLMODE"))
 	if dbSSLMode == "" {
 		dbSSLMode = "require"
@@ -90,21 +110,27 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		DBHost:       getEnv("DB_HOST", "localhost"),
-		DBPort:       getEnv("DB_PORT", "5432"),
-		DBUser:       getEnv("DB_USER", "postgres"),
-		DBPassword:   dbPassword,
-		DBName:         getEnv("DB_NAME", "discipline"),
-		DBSSLMode:      dbSSLMode,
-		JWTSecret:      jwtSecret,
-		Port:           getEnv("PORT", "8080"),
-		AllowedOrigins: getEnv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:5173,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
+		DBHost:            getEnv("DB_HOST", "localhost"),
+		DBPort:            getEnv("DB_PORT", "5432"),
+		DBUser:            getEnv("DB_USER", "postgres"),
+		DBPassword:        dbPassword,
+		DBName:            getEnv("DB_NAME", "discipline"),
+		DBSSLMode:         dbSSLMode,
+		JWTSecret:         jwtSecret,
+		Port:              getEnv("PORT", "8080"),
+		AllowedOrigins:    getEnv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:8082,http://localhost:8083,http://localhost:5173,https://discipline-front.up.railway.app,https://accurate-wisdom-production-cda6.up.railway.app/"),
 		InternalJWTSecret: internalJWTSecret,
 		PythonServiceURL:  pythonServiceURL,
 		TrustedProxies:    trustedProxies,
 		TrustedIPHeader:   strings.TrimSpace(os.Getenv("TRUSTED_IP_HEADER")),
 		AppEnv:            strings.TrimSpace(os.Getenv("APP_ENV")),
 		EnableDocs:        strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_DOCS")), "true"),
+		EnableIPDebug:     strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_IP_DEBUG")), "true"),
+		RedisURL:          redisURL,
+		TurnstileSecret:   turnstileSecret,
+		SentryDSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
+		SentryEnvironment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
+		Features:          EnabledFeatures(os.Environ()),
 	}, nil
 }
 
@@ -126,6 +152,23 @@ func splitList(raw string) []string {
 		}
 	}
 	return out
+}
+
+// featureVar matches a feature flag variable: FEATURE_ + an id such as F1, F12A, F9B.
+var featureVar = regexp.MustCompile(`^FEATURE_(F[0-9]+[A-Z]?)$`)
+
+// EnabledFeatures returns the sorted ids of the FEATURE_<id> variables set to "true".
+// Any other value, or an unset variable, leaves the feature off.
+func EnabledFeatures(environ []string) []string {
+	enabled := []string{}
+	for _, kv := range environ {
+		key, value, _ := strings.Cut(kv, "=")
+		if m := featureVar.FindStringSubmatch(key); m != nil && strings.EqualFold(strings.TrimSpace(value), "true") {
+			enabled = append(enabled, m[1])
+		}
+	}
+	slices.Sort(enabled)
+	return enabled
 }
 
 // validProxy reports whether s is an IP address or CIDR range.

@@ -1,5 +1,14 @@
 basePath: /api
 definitions:
+  handlers.AdjustDistractionsRequest:
+    properties:
+      delta:
+        description: 1 or -1
+        example: 1
+        type: integer
+    required:
+    - delta
+    type: object
   handlers.AuthResponse:
     properties:
       message:
@@ -11,6 +20,22 @@ definitions:
       user:
         $ref: '#/definitions/models.User'
     type: object
+  handlers.BlockResponse:
+    properties:
+      task:
+        $ref: '#/definitions/models.Task'
+    type: object
+  handlers.BulkCreateTasksRequest:
+    properties:
+      tasks:
+        items:
+          $ref: '#/definitions/handlers.CreateTaskRequest'
+        maxItems: 200
+        minItems: 1
+        type: array
+    required:
+    - tasks
+    type: object
   handlers.CachedQuote:
     properties:
       author:
@@ -20,34 +45,92 @@ definitions:
         example: Discipline is the bridge between goals and accomplishment.
         type: string
     type: object
+  handlers.CheckInRequest:
+    properties:
+      actualEndMin:
+        example: 600
+        type: integer
+      actualStartMin:
+        description: minutes 0-1440
+        example: 545
+        type: integer
+      focusRating:
+        description: 1-5
+        example: 4
+        type: integer
+      note:
+        example: Phone call in the middle
+        type: string
+      status:
+        description: done | partial | skipped
+        example: done
+        type: string
+    required:
+    - status
+    type: object
+  handlers.CheckinRequest:
+    properties:
+      energy:
+        description: 1-5
+        example: 3
+        type: integer
+      note:
+        example: Slept well
+        type: string
+      skipped:
+        example: false
+        type: boolean
+      sleepEndMin:
+        example: 420
+        type: integer
+      sleepQuality:
+        description: 1-5
+        example: 4
+        type: integer
+      sleepStartMin:
+        description: after sleepEndMin = the evening before
+        example: 1410
+        type: integer
+    type: object
+  handlers.CheckinResponse:
+    properties:
+      checkin:
+        $ref: '#/definitions/models.Checkin'
+    type: object
+  handlers.CheckinTodayResponse:
+    properties:
+      checkin:
+        $ref: '#/definitions/models.Checkin'
+      date:
+        example: "2026-10-30"
+        type: string
+      defaults:
+        $ref: '#/definitions/handlers.SleepDefaults'
+    type: object
   handlers.CreateTaskRequest:
     properties:
       category:
-        enum:
-        - deep-work
-        - study
-        - admin
-        - gym
-        - rest
+        description: deep-work|study|admin|gym|rest
         example: deep-work
         type: string
       date:
+        description: YYYY-MM-DD
         example: "2026-03-02"
         type: string
       endTime:
+        description: HH:MM, after start, ≤ 24:00
         example: "10:00"
         type: string
       energy:
+        description: 1-5
         example: 4
-        maximum: 5
-        minimum: 1
         type: integer
       name:
+        description: 1-120 chars
         example: Morning routine
-        maxLength: 200
-        minLength: 1
         type: string
       startTime:
+        description: HH:MM
         example: "09:00"
         type: string
     required:
@@ -60,11 +143,34 @@ definitions:
     type: object
   handlers.ErrorResponse:
     properties:
+      code:
+        description: stable; the web translates it (contracts/errors.schema.json)
+        example: validation_failed
+        type: string
       details:
         example: 'Key: ''Email'' required'
         type: string
       error:
         example: Validation failed
+        type: string
+    type: object
+  handlers.FeaturesResponse:
+    properties:
+      features:
+        items:
+          type: string
+        type: array
+    type: object
+  handlers.LoginErrorResponse:
+    properties:
+      captchaRequired:
+        example: false
+        type: boolean
+      code:
+        example: invalid_credentials
+        type: string
+      error:
+        example: invalid email or password
         type: string
     type: object
   handlers.LoginRequest:
@@ -75,9 +181,57 @@ definitions:
       password:
         example: securepass123
         type: string
+      turnstileToken:
+        description: TurnstileToken is required once the email has 3 failed logins
+          in 15 minutes.
+        example: 0.turnstile-token
+        maxLength: 2048
+        type: string
     required:
     - email
     - password
+    type: object
+  handlers.MoveTaskRequest:
+    properties:
+      date:
+        example: "2026-10-30"
+        type: string
+      endMin:
+        example: 600
+        type: integer
+      startMin:
+        example: 540
+        type: integer
+    required:
+    - date
+    - endMin
+    - startMin
+    type: object
+  handlers.ParkingListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handlers.ParkingNoteView'
+        type: array
+    type: object
+  handlers.ParkingNoteRequest:
+    properties:
+      sessionId:
+        type: string
+      text:
+        example: Email the professor
+        type: string
+    type: object
+  handlers.ParkingNoteView:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      sessionId:
+        type: string
+      text:
+        type: string
     type: object
   handlers.RegisterRequest:
     properties:
@@ -90,13 +244,157 @@ definitions:
         minLength: 2
         type: string
       password:
+        description: 'policy: 10+ chars, max 72 bytes'
         example: securepass123
-        minLength: 6
+        type: string
+      turnstileToken:
+        description: TurnstileToken is required on public registration (not on admin
+          registration).
+        example: 0.turnstile-token
+        maxLength: 2048
         type: string
     required:
     - email
     - name
     - password
+    type: object
+  handlers.SavePlanRequest:
+    properties:
+      tasks:
+        items:
+          $ref: '#/definitions/handlers.CreateTaskRequest'
+        maxItems: 200
+        type: array
+      weekStart:
+        description: a Monday
+        example: "2026-11-02"
+        type: string
+    required:
+    - weekStart
+    type: object
+  handlers.SessionListResponse:
+    properties:
+      serverNow:
+        type: string
+      sessions:
+        items:
+          $ref: '#/definitions/handlers.SessionView'
+        type: array
+    type: object
+  handlers.SessionRequest:
+    properties:
+      blockId:
+        type: integer
+      breakMinutes:
+        example: 5
+        type: integer
+      distractions:
+        example: 0
+        type: integer
+      endedAt:
+        type: string
+      outcome:
+        description: completed | abandoned
+        type: string
+      plannedMinutes:
+        example: 25
+        type: integer
+      startedAt:
+        description: only for a start queued offline
+        type: string
+    type: object
+  handlers.SessionResponse:
+    properties:
+      serverNow:
+        example: "2026-10-30T04:01:00Z"
+        type: string
+      session:
+        $ref: '#/definitions/handlers.SessionView'
+    type: object
+  handlers.SessionView:
+    properties:
+      blockId:
+        type: integer
+      breakMinutes:
+        example: 5
+        type: integer
+      distractions:
+        type: integer
+      endedAt:
+        type: string
+      id:
+        example: 6f1c2a7e-6a49-4a43-9c55-0d6f2b6a9f10
+        type: string
+      outcome:
+        description: completed | abandoned | null while running
+        type: string
+      plannedMinutes:
+        example: 25
+        type: integer
+      startedAt:
+        example: "2026-10-30T04:00:00Z"
+        type: string
+    type: object
+  handlers.ShutdownRequest:
+    properties:
+      win:
+        example: Finished the essay draft
+        type: string
+    type: object
+  handlers.ShutdownResponse:
+    properties:
+      shutdown:
+        $ref: '#/definitions/handlers.ShutdownView'
+    type: object
+  handlers.ShutdownTodayResponse:
+    properties:
+      date:
+        type: string
+      shutdown:
+        $ref: '#/definitions/handlers.ShutdownView'
+    type: object
+  handlers.ShutdownView:
+    properties:
+      closedAt:
+        example: "2026-10-30T16:30:00Z"
+        type: string
+      date:
+        example: "2026-10-30"
+        type: string
+      win:
+        example: Finished the essay draft
+        type: string
+    type: object
+  handlers.SleepDefaults:
+    properties:
+      sleepEndMin:
+        example: 420
+        type: integer
+      sleepStartMin:
+        example: 1380
+        type: integer
+    type: object
+  handlers.UpdateProfileRequest:
+    properties:
+      email:
+        example: jane@example.com
+        type: string
+      name:
+        example: Jane Doe
+        maxLength: 100
+        type: string
+      newPassword:
+        example: newpass456
+        type: string
+      oldPassword:
+        description: required to change email or password
+        example: oldpass123
+        type: string
+      timezone:
+        description: IANA name
+        example: Asia/Tashkent
+        maxLength: 64
+        type: string
     type: object
   handlers.UpdateTaskRequest:
     properties:
@@ -130,6 +428,78 @@ definitions:
       user:
         $ref: '#/definitions/models.User'
     type: object
+  models.Checkin:
+    properties:
+      date:
+        type: string
+      energy:
+        type: integer
+      note:
+        type: string
+      skipped:
+        type: boolean
+      sleepEndMin:
+        type: integer
+      sleepMinutes:
+        description: real elapsed time, computed in the user's zone
+        type: integer
+      sleepQuality:
+        type: integer
+      sleepStartMin:
+        description: '> SleepEndMin: began the evening before'
+        type: integer
+    type: object
+  models.Task:
+    properties:
+      actualEndMin:
+        type: integer
+      actualStartMin:
+        description: 'Lifecycle (F1): what actually happened.'
+        type: integer
+      category:
+        type: string
+      created_at:
+        type: string
+      date:
+        type: string
+      distractions:
+        type: integer
+      endMin:
+        type: integer
+      endTime:
+        type: string
+      energy:
+        type: integer
+      focusRating:
+        description: 1-5, asked after done/partial
+        type: integer
+      id:
+        type: integer
+      movedFromId:
+        type: integer
+      name:
+        type: string
+      note:
+        type: string
+      planId:
+        description: set for smart-schedule blocks
+        type: string
+      source:
+        description: manual | smart-schedule
+        type: string
+      startMin:
+        description: minutes 0-1440
+        type: integer
+      startTime:
+        description: kept until the TIME columns are dropped
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: integer
+    type: object
   models.User:
     properties:
       created_at:
@@ -142,25 +512,11 @@ definitions:
         type: string
       role:
         type: string
+      timezone:
+        description: IANA name
+        type: string
       updated_at:
         type: string
-    type: object
-  services.DashboardStats:
-    properties:
-      completedTasks:
-        type: integer
-      completionRate:
-        description: percentage 0-100
-        type: integer
-      deepWorkHours:
-        type: number
-      focusScore:
-        description: 0-100
-        type: integer
-      totalHours:
-        type: number
-      totalTasks:
-        type: integer
     type: object
 host: localhost:8080
 info:
@@ -206,11 +562,109 @@ paths:
       summary: Register a new admin (admin only)
       tags:
       - Admin
+  /analytics:
+    get:
+      description: Proxies request to the Python analytics microservice securely using
+        the authenticated user's ID.
+      parameters:
+      - description: Report range (week or month, defaults to week)
+        example: week
+        in: query
+        name: range
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get productivity analytics
+      tags:
+      - Analytics
+  /analytics/focus-patterns:
+    get:
+      description: Heatmap, weekday scores, deep-work slots and distraction trend
+        over the last N days, computed by the analytics service.
+      parameters:
+      - description: Days to cover (7-365, defaults to 30)
+        example: 30
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Focus patterns
+      tags:
+      - Analytics
+  /analytics/smart-schedule:
+    post:
+      consumes:
+      - application/json
+      description: Proxies request to Python to generate a weekly schedule based on
+        user's past habits.
+      parameters:
+      - description: Smart schedule request (commitments and goals)
+        in: body
+        name: body
+        required: true
+        schema: {}
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generate smart schedule
+      tags:
+      - Analytics
   /auth/login:
     post:
       consumes:
       - application/json
-      description: Authenticates a user and returns a JWT token
+      description: Authenticates a user and returns a JWT token. Failures are throttled
+        per (email, IP) with a progressive delay (429 + Retry-After) and per IP; after
+        3 failures for an email within 15 minutes, a Turnstile token is required (401
+        with captchaRequired).
       parameters:
       - description: Login credentials
         in: body
@@ -232,8 +686,31 @@ paths:
         "401":
           description: Unauthorized
           schema:
+            $ref: '#/definitions/handlers.LoginErrorResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
             $ref: '#/definitions/handlers.ErrorResponse'
       summary: Login
+      tags:
+      - Auth
+  /auth/logout:
+    post:
+      description: Revokes every token issued to the authenticated user
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Log out everywhere
       tags:
       - Auth
   /auth/register:
@@ -263,35 +740,94 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
       summary: Register a new user
       tags:
       - Auth
-  /dashboard/stats:
+  /checkins/today:
     get:
-      description: Returns computed stats for a given date (completion, focus score,
-        hours)
-      parameters:
-      - description: Date (YYYY-MM-DD), defaults to today
-        example: "2026-03-02"
-        in: query
-        name: date
-        type: string
+      description: '"Today" is the user''s local date. checkin is null until done
+        or skipped; defaults prefill the sleep times.'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/services.DashboardStats'
-        "500":
-          description: Internal Server Error
+            $ref: '#/definitions/handlers.CheckinTodayResponse'
+      security:
+      - BearerAuth: []
+      summary: Today's morning check-in
+      tags:
+      - Daily
+    put:
+      consumes:
+      - application/json
+      description: 'Creates or replaces the check-in for the user''s local date (editable
+        the same day). Send {"skipped": true} to skip.'
+      parameters:
+      - description: Check-in
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CheckinRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.CheckinResponse'
+        "400":
+          description: Bad Request
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Get dashboard statistics
+      summary: Save today's morning check-in
+      tags:
+      - Daily
+  /dashboard/today:
+    get:
+      description: Planned/done minutes and focus-score components for today in the
+        user's time zone, computed by the analytics service.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Today's dashboard metrics
       tags:
       - Dashboard
+  /features:
+    get:
+      description: Ids of the features switched on with FEATURE_<id>=true on the server.
+        Anything not listed is off.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.FeaturesResponse'
+      security:
+      - BearerAuth: []
+      summary: Enabled feature flags
+      tags:
+      - Features
   /me:
     get:
       description: Returns the authenticated user's profile
@@ -315,6 +851,84 @@ paths:
       summary: Get current user
       tags:
       - Auth
+    put:
+      consumes:
+      - application/json
+      description: Updates the authenticated user's name, email, and/or password.
+        Changing email or password requires oldPassword.
+      parameters:
+      - description: Profile update data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update user profile
+      tags:
+      - Auth
+  /parking-lot:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ParkingListResponse'
+      security:
+      - BearerAuth: []
+      summary: Parked thoughts
+      tags:
+      - Daily
+  /parking-lot/{id}:
+    put:
+      consumes:
+      - application/json
+      description: The client makes the id (UUID); sending it again stores nothing
+        new.
+      parameters:
+      - description: Note UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Note
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ParkingNoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Park a thought for later
+      tags:
+      - Daily
   /quote:
     get:
       description: Returns a motivational quote. Cached for 2-3 hours, refreshes automatically.
@@ -330,6 +944,126 @@ paths:
       summary: Get motivational quote
       tags:
       - Quotes
+  /sessions:
+    get:
+      parameters:
+      - description: 'YYYY-MM-DD (default: today in the user''s zone)'
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.SessionListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Focus sessions started on a day
+      tags:
+      - Daily
+  /sessions/{id}:
+    put:
+      consumes:
+      - application/json
+      description: The client makes the id (UUID); the same body sent again changes
+        nothing. A new session gets the server's time as its start (or startedAt,
+        for a start queued offline in the last 24 h). One running session per user.
+      parameters:
+      - description: Session UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.SessionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start or update a focus session
+      tags:
+      - Daily
+  /sessions/active:
+    get:
+      description: session is null when none is running. Sessions left running 60
+        min past their planned end are ended as abandoned.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.SessionResponse'
+      security:
+      - BearerAuth: []
+      summary: The running focus session
+      tags:
+      - Daily
+  /shutdowns/today:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ShutdownTodayResponse'
+      security:
+      - BearerAuth: []
+      summary: Today's evening shutdown
+      tags:
+      - Daily
+    put:
+      consumes:
+      - application/json
+      description: Marks the user's local day closed with one win. Sending it again
+        keeps the first close time.
+      parameters:
+      - description: Shutdown
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ShutdownRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ShutdownResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Close today (evening shutdown)
+      tags:
+      - Daily
   /tasks:
     get:
       description: Returns tasks for the authenticated user, optionally filtered by
@@ -378,6 +1112,10 @@ paths:
             type: object
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
       security:
@@ -446,6 +1184,198 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a task
+      tags:
+      - Tasks
+  /tasks/{id}/check-in:
+    post:
+      consumes:
+      - application/json
+      description: Sets what happened in the block. Sending the same check-in again
+        gives the same result.
+      parameters:
+      - description: Block ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Check-in
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CheckInRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BlockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Check in a block (done / partial / skipped)
+      tags:
+      - Tasks
+  /tasks/{id}/distractions:
+    post:
+      consumes:
+      - application/json
+      description: Atomically adds delta (1 or -1) to a block's distraction count,
+        clamped to 0-100
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Delta
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.AdjustDistractionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Increment or decrement distractions
+      tags:
+      - Tasks
+  /tasks/{id}/move:
+    post:
+      consumes:
+      - application/json
+      description: 'Marks the block "moved" and creates a new planned block (movedFromId)
+        at the new date/time. Needs an Idempotency-Key header (8-100 characters):
+        a replay returns the first result.'
+      parameters:
+      - description: Block ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Unique per move
+        in: header
+        name: Idempotency-Key
+        required: true
+        type: string
+      - description: New date and time
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.MoveTaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.BlockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Move a block
+      tags:
+      - Tasks
+  /tasks/bulk:
+    post:
+      consumes:
+      - application/json
+      description: Creates multiple time blocks for the authenticated user
+      parameters:
+      - description: Array of tasks
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkCreateTasksRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create multiple tasks
+      tags:
+      - Tasks
+  /tasks/plan:
+    put:
+      consumes:
+      - application/json
+      description: Replaces the blocks previously generated for that week (manual
+        blocks are kept) in one transaction.
+      parameters:
+      - description: Week and blocks
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SavePlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save a generated weekly plan
       tags:
       - Tasks
   /vocabulary:

@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 	"time"
 	_ "time/tzdata" // the alpine runtime image has no zoneinfo; users' IANA zones must load
 
@@ -10,7 +11,11 @@ import (
 
 	"discipline-backend/config"
 	_ "discipline-backend/docs" // Swagger generated docs
+	"discipline-backend/internal/captcha"
+	"discipline-backend/internal/errtrack"
+	"discipline-backend/internal/events"
 	"discipline-backend/internal/handlers"
+	"discipline-backend/internal/logging"
 	"discipline-backend/internal/middleware"
 	"discipline-backend/internal/repositories"
 	"discipline-backend/internal/routes"
@@ -29,10 +34,20 @@ import (
 // @description Enter your JWT token with the Bearer prefix: "Bearer <token>"
 
 func main() {
+	// Structured JSON logs on stdout (the standard log package included)
+	logging.Setup(os.Stdout)
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Startup aborted: %v", err)
+	}
+
+	// Optional error reporting
+	if enabled, err := errtrack.Init(errtrack.Options{DSN: cfg.SentryDSN, Environment: cfg.SentryEnvironment}); err != nil {
+		log.Fatalf("Invalid SENTRY_DSN: %v", err)
+	} else if enabled {
+		log.Println("Sentry error reporting enabled")
 	}
 
 	// Connect to database
@@ -41,16 +56,19 @@ func main() {
 	// Seed the first admin user if none exists
 	config.SeedAdmin(db, cfg)
 
+	// Shared rate-limit and login-throttle state
+	limits := config.ConnectRedis(cfg)
+
 	// Initialize layers: repository → service → handler
 
 	// Auth
 	userRepo := repositories.NewUserRepository(db)
 	authService := services.NewAuthService(userRepo, cfg.JWTSecret)
-	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(100000))
+	authHandler := handlers.NewAuthHandler(authService, services.NewLoginThrottle(limits), captcha.NewTurnstile(cfg.TurnstileSecret))
 
 	// Tasks
 	taskRepo := repositories.NewTaskRepository(db)
-	taskService := services.NewTaskService(taskRepo)
+	taskService := services.NewTaskServiceWithEvents(taskRepo, events.NewRecorder(db))
 	taskHandler := handlers.NewTaskHandler(taskService)
 
 	// Quotes
@@ -63,13 +81,23 @@ func main() {
 
 	// Setup Gin router (release mode unless APP_ENV=development)
 	gin.SetMode(cfg.GinMode())
-	r := gin.Default()
+	r := gin.New() // RequestID, AccessLog and Recovery are added in SetupRoutes
 	if err := middleware.ConfigureClientIP(r, cfg.TrustedProxies, cfg.TrustedIPHeader); err != nil {
 		log.Fatalf("Invalid trusted proxy configuration: %v", err)
 	}
 
 	// Register all routes
-	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo))
+	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, handlers.NewFeatureHandler(cfg.Features),
+		handlers.NewDailyHandler(services.NewDailyService(repositories.NewDailyRepository(db), events.NewRecorder(db))), cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
+	routes.SetupIPDebug(r, cfg.EnableIPDebug)
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("Failed to access database pool: %v", err)
+	}
+	routes.SetupHealth(r, map[string]routes.HealthCheck{
+		"database": sqlDB.PingContext,
+		"redis":    limits.Ping,
+	})
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)

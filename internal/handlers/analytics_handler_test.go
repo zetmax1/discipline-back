@@ -13,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+
+	"discipline-backend/internal/logging"
 )
 
 const testInternalSecret = "internal-secret-for-tests-0123456789"
@@ -24,6 +26,7 @@ type upstreamRecorder struct {
 	lastURL  *url.URL
 	lastBody []byte
 	lastAuth string
+	lastRID  string
 }
 
 func (u *upstreamRecorder) server(t *testing.T) *httptest.Server {
@@ -35,6 +38,7 @@ func (u *upstreamRecorder) server(t *testing.T) *httptest.Server {
 		u.lastURL = r.URL
 		u.lastBody = body
 		u.lastAuth = r.Header.Get("Authorization")
+		u.lastRID = r.Header.Get("X-Request-ID")
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -221,22 +225,17 @@ func TestSmartSchedule_ValidBodyIsReencoded(t *testing.T) {
 	}
 }
 
-func TestSmartSchedule_RejectsInvalidBodies(t *testing.T) {
+// Structural problems are rejected by Gin itself and never reach the analytics service.
+func TestSmartSchedule_RejectsMalformedBodies(t *testing.T) {
 	cases := map[string]string{
 		"unknown top-level field": `{"commitments": [], "goals": {}, "user_id": 2}`,
 		"unknown nested field":    `{"commitments": [{"id":"1","name":"X","startTime":"09:00","endTime":"10:00","days":["Monday"],"x":1}], "goals": {}}`,
-		"bad time format":         `{"commitments": [{"id":"1","name":"X","startTime":"9am","endTime":"10:00","days":["Monday"]}], "goals": {}}`,
-		"time out of range":       `{"commitments": [{"id":"1","name":"X","startTime":"24:00","endTime":"10:00","days":["Monday"]}], "goals": {}}`,
-		"empty time":              `{"commitments": [{"id":"1","name":"X","startTime":"","endTime":"10:00","days":["Monday"]}], "goals": {}}`,
-		"bad day":                 `{"commitments": [{"id":"1","name":"X","startTime":"09:00","endTime":"10:00","days":["monday"]}], "goals": {}}`,
-		"no days":                 `{"commitments": [{"id":"1","name":"X","startTime":"09:00","endTime":"10:00","days":[]}], "goals": {}}`,
-		"empty name":              `{"commitments": [{"id":"1","name":"","startTime":"09:00","endTime":"10:00","days":["Monday"]}], "goals": {}}`,
 		"long name":               `{"commitments": [{"id":"1","name":"` + strings.Repeat("a", 101) + `","startTime":"09:00","endTime":"10:00","days":["Monday"]}], "goals": {}}`,
-		"negative goal":           `{"commitments": [], "goals": {"deepWorkHours": -1}}`,
-		"huge goal":               `{"commitments": [], "goals": {"studyHours": 169}}`,
-		"missing goals":           `{"commitments": []}`,
+		"too many days":           `{"commitments": [{"id":"1","name":"X","startTime":"09:00","endTime":"10:00","days":["Monday","Monday","Monday","Monday","Monday","Monday","Monday","Monday"]}], "goals": {}}`,
+		"wrong type":              `{"commitments": [{"id":"1","name":"X","startTime":900,"endTime":"10:00","days":["Monday"]}], "goals": {}}`,
 		"not json":                `user_id=2`,
 		"trailing data":           `{"commitments": [], "goals": {}} {"x":1}`,
+		"goal overflow":           `{"commitments": [], "goals": {"studyHours": 1e309}}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -251,6 +250,38 @@ func TestSmartSchedule_RejectsInvalidBodies(t *testing.T) {
 				t.Fatalf("upstream must not be called, got %d", up.calls)
 			}
 		})
+	}
+}
+
+// Semantic rules (time format, end != start, day names, goal range/steps) live in the
+// analytics service; Gin relays its 422 and message unchanged.
+func TestSmartSchedule_PassesThroughValidation422(t *testing.T) {
+	const msg = "commitments[0].startTime: must be HH:MM between 00:00 and 24:00"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":"` + msg + `","details":[{"field":"commitments[0].startTime","message":"must be HH:MM between 00:00 and 24:00"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	r := analyticsRouter(newTestAnalyticsHandler(t, srv.URL))
+
+	for _, body := range []string{
+		`{"commitments": [{"id":"1","name":"X","startTime":"9am","endTime":"10:00","days":["Monday"]}], "goals": {}}`,
+		`{"commitments": [{"id":"1","name":"X","startTime":"09:00","endTime":"10:00","days":["monday"]}], "goals": {}}`,
+		`{"commitments": [], "goals": {"studyHours": 0.3}}`,
+		`{"commitments": []}`,
+	} {
+		w := doRequest(r, http.MethodPost, "/analytics/smart-schedule", body)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected the upstream 422 to be relayed, got %d: %s", w.Code, w.Body.String())
+		}
+		var got struct {
+			Error   string           `json:"error"`
+			Details []map[string]any `json:"details"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Error != msg || len(got.Details) != 1 {
+			t.Fatalf("422 body must carry the analytics service's message, got %s", w.Body.String())
+		}
 	}
 }
 
@@ -365,4 +396,23 @@ func TestDashboardToday_ProxiesToPythonTodayWithUserToken(t *testing.T) {
 		t.Fatalf("must call /analytics/today with no client params, got %s?%s", up.lastURL.Path, up.lastURL.RawQuery)
 	}
 	assertForwardedUser(t, up, "1")
+}
+
+func TestAnalyticsProxy_ForwardsRequestID(t *testing.T) {
+	up := &upstreamRecorder{}
+	srv := up.server(t)
+	h := newTestAnalyticsHandler(t, srv.URL)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", uint(1))
+		c.Request = c.Request.WithContext(logging.WithRequestID(c.Request.Context(), "rid-0123456789"))
+	})
+	r.GET("/analytics", h.GetAnalytics)
+	if w := doRequest(r, http.MethodGet, "/analytics?range=week", ""); w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if up.lastRID != "rid-0123456789" {
+		t.Fatalf("the request ID must reach the analytics service, got %q", up.lastRID)
+	}
 }
