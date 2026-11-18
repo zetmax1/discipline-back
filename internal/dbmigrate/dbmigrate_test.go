@@ -460,34 +460,58 @@ func TestBlockLifecycleMigrationKeepsEveryBlock(t *testing.T) {
 	if err := dbmigrate.UpTo(ctx, db, 7); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES (1, 'Ann', 'ann@example.com', 'x')`)
+	mustExec(t, db, `INSERT INTO users (id, name, email, password) VALUES
+		(1, 'Ann', 'ann@example.com', 'x'),
+		(2, 'Bob', 'bob@example.com', 'x')`)
+	// Production-shaped rows: both users, manual and plan-generated blocks (source and plan_id
+	// come from 00006; the CHECK there spells the plan source 'smart-schedule'), 00:00 starts,
+	// a 24:00 end and a legacy inverted row.
 	mustExec(t, db, `INSERT INTO tasks (id, user_id, name, category, start_time, end_time, date, status, distractions, energy) VALUES
 		(1, 1, 'Late study', 'study', '09:30', '24:00', '2026-10-29', 'pending', 0, 3),
 		(2, 1, 'Deep', 'deep-work', '08:00', '09:00', '2026-10-28', 'completed', 2, 5),
 		(3, 1, 'Gym', 'gym', '17:00', '18:30', '2026-10-28', 'skipped', 0, 3),
 		(4, 1, 'Legacy', 'admin', '10:00', '09:00', '2026-10-27', 'pending', 0, 3)`)
+	mustExec(t, db, `INSERT INTO tasks (id, user_id, name, category, start_time, end_time, date, status, source, plan_id) VALUES
+		(10, 1, 'Night shift', 'study', '00:00', '01:00', '2026-10-30', 'pending', 'smart-schedule', '11111111-1111-1111-1111-111111111111'),
+		(11, 2, 'Whole day', 'deep-work', '00:00', '24:00', '2026-10-30', 'pending', 'smart-schedule', '11111111-1111-1111-1111-111111111111'),
+		(12, 2, 'Early run', 'gym', '06:00', '07:00', '2026-10-29', 'completed', 'manual', NULL),
+		(13, 2, 'Late plan', 'admin', '22:00', '24:00', '2026-10-28', 'skipped', 'smart-schedule', '22222222-2222-2222-2222-222222222222')`)
 
 	if err := dbmigrate.UpTo(ctx, db, 8); err != nil {
 		t.Fatalf("block lifecycle migration: %v", err)
 	}
 	want := map[int]string{
-		1: "2026-10-29 570 1440 planned study", 2: "2026-10-28 480 540 done deep-work",
-		3: "2026-10-28 1020 1110 skipped gym", 4: "2026-10-27 600 540 planned admin",
+		1:  "u1 2026-10-29 570 1440 planned study manual -",
+		2:  "u1 2026-10-28 480 540 done deep-work manual -",
+		3:  "u1 2026-10-28 1020 1110 skipped gym manual -",
+		4:  "u1 2026-10-27 600 540 planned admin manual -",
+		10: "u1 2026-10-30 0 60 planned study smart-schedule 11111111-1111-1111-1111-111111111111",
+		11: "u2 2026-10-30 0 1440 planned deep-work smart-schedule 11111111-1111-1111-1111-111111111111",
+		12: "u2 2026-10-29 360 420 done gym manual -",
+		13: "u2 2026-10-28 1320 1440 skipped admin smart-schedule 22222222-2222-2222-2222-222222222222",
 	}
-	rows, err := db.Query(`SELECT id, date::text, start_min, end_min, status, category FROM tasks ORDER BY id`)
+	seen := 0
+	rows, err := db.Query(`SELECT id, user_id, date::text, start_min, end_min, status, category, source, coalesce(plan_id::text, '-') FROM tasks ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, s, e int
-		var date, status, category string
-		if err := rows.Scan(&id, &date, &s, &e, &status, &category); err != nil {
+		var id, user, s, e int
+		var date, status, category, source, planID string
+		if err := rows.Scan(&id, &user, &date, &s, &e, &status, &category, &source, &planID); err != nil {
 			t.Fatal(err)
 		}
-		if got := fmt.Sprintf("%s %d %d %s %s", date, s, e, status, category); got != want[id] {
+		seen++
+		if got := fmt.Sprintf("u%d %s %d %d %s %s %s %s", user, date, s, e, status, category, source, planID); got != want[id] {
 			t.Errorf("task %d: want %q, got %q", id, want[id], got)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if seen != len(want) {
+		t.Errorf("the migration must keep every block: want %d rows, got %d", len(want), seen)
 	}
 	if _, err := db.Exec(`UPDATE tasks SET status = 'in-progress' WHERE id = 1`); err == nil {
 		t.Error("only the new statuses are allowed after the migration")
@@ -523,8 +547,16 @@ func TestBlockLifecycleMigrationKeepsEveryBlock(t *testing.T) {
 	}
 	var statuses string
 	mustScan(t, db, `SELECT string_agg(status, ',' ORDER BY id) FROM tasks`, &statuses)
-	if statuses != "skipped,completed,skipped,pending,pending,completed" {
+	if statuses != "skipped,completed,skipped,pending,pending,completed,pending,pending,completed,skipped" {
 		t.Fatalf("down must map statuses back, got %s", statuses)
+	}
+	// Neither direction may touch which plan a block came from, or the other user's rows.
+	var plans string
+	mustScan(t, db, `SELECT string_agg(source || ':' || coalesce(plan_id::text, '-'), ',' ORDER BY id) FROM tasks WHERE user_id = 2`, &plans)
+	const wantPlans = "smart-schedule:11111111-1111-1111-1111-111111111111,manual:-," +
+		"smart-schedule:22222222-2222-2222-2222-222222222222"
+	if plans != wantPlans {
+		t.Errorf("plan source must survive up and down: want %q, got %q", wantPlans, plans)
 	}
 }
 
