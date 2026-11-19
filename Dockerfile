@@ -10,8 +10,10 @@ RUN go mod download
 # Copy the source code
 COPY . .
 
-# Build the binary
+# Build the binaries: the server, and the migrator Railway runs before the new version
+# takes traffic (railway.json preDeployCommand).
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/discipline-backend ./cmd/server/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/migrate ./cmd/migrate
 
 # Run stage
 FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
@@ -21,8 +23,9 @@ RUN addgroup -S -g 10001 app && adduser -S -D -H -u 10001 -G app app
 
 WORKDIR /app
 
-# Copy the binary from the builder stage
+# Copy the binaries from the builder stage
 COPY --from=builder /app/discipline-backend .
+COPY --from=builder /app/migrate .
 
 USER 10001:10001
 
