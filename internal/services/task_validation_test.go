@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/models"
@@ -124,5 +125,91 @@ func TestMergeTaskUpdate_MapsLegacyStatuses(t *testing.T) {
 		if err != nil || cols["status"] != want || merged.Status != want {
 			t.Fatalf("%s: want %s, got %v %v %v", legacy, want, cols, merged.Status, err)
 		}
+	}
+}
+
+func TestSessionSpanMinutes(t *testing.T) {
+	tz := func(name string) *time.Location {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return loc
+	}
+	instant := func(loc *time.Location, wall string) time.Time {
+		tm, err := time.ParseInLocation("2006-01-02 15:04:05", wall, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tm
+	}
+	tash, ny := tz("Asia/Tashkent"), tz("America/New_York")
+
+	cases := []struct {
+		name            string
+		loc             *time.Location
+		date            models.Date
+		first, last     string
+		wantStart, want int
+		wantOK          bool
+	}{
+		{"the span of the sessions, in the user's zone", tash, "2026-10-29", "2026-10-29 09:05:00", "2026-10-29 10:40:00", 545, 640, true},
+		{"seconds are truncated, not rounded", tash, "2026-10-29", "2026-10-29 09:05:59", "2026-10-29 10:40:01", 545, 640, true},
+		{"a session that began before the block's day starts at midnight", tash, "2026-10-29", "2026-10-28 23:30:00", "2026-10-29 00:40:00", 0, 40, true},
+		{"a session that ran past midnight ends at 24:00", tash, "2026-10-29", "2026-10-29 23:30:00", "2026-10-30 00:20:00", 1410, 1440, true},
+		{"exactly midnight to midnight is the whole day", tash, "2026-10-29", "2026-10-29 00:00:00", "2026-10-30 00:00:00", 0, 1440, true},
+		{"wall-clock minutes across the spring-forward gap", ny, "2026-03-08", "2026-03-08 01:30:00", "2026-03-08 03:30:00", 90, 210, true},
+		{"wall-clock minutes across the autumn fall-back hour", ny, "2026-11-01", "2026-11-01 00:30:00", "2026-11-01 02:30:00", 30, 150, true},
+		{"a span inside one minute is unusable", tash, "2026-10-29", "2026-10-29 09:05:10", "2026-10-29 09:05:50", 0, 0, false},
+		{"a span wholly after the block's day is unusable", tash, "2026-10-29", "2026-10-30 09:00:00", "2026-10-30 10:00:00", 0, 0, false},
+		{"an unparsable date is unusable", tash, "not-a-date", "2026-10-29 09:00:00", "2026-10-29 10:00:00", 0, 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := sessionSpan(c.date, instant(c.loc, c.first), instant(c.loc, c.last), c.loc)
+			if ok != c.wantOK {
+				t.Fatalf("ok = %v, want %v (%+v)", ok, c.wantOK, got)
+			}
+			if ok && (got.start != c.wantStart || got.end != c.want) {
+				t.Errorf("got %d-%d, want %d-%d", got.start, got.end, c.wantStart, c.want)
+			}
+		})
+	}
+}
+
+func TestCheckInColumns_ActualTimesDefaultToTheSessionsThenThePlannedTimes(t *testing.T) {
+	block := models.Task{StartMin: 540, EndMin: 630, Date: "2026-10-29"}
+	min := func(v int) *int { return &v }
+
+	cols, err := checkInColumns(block, CheckIn{Status: models.StatusDone}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols["actual_start_min"] != 540 || cols["actual_end_min"] != 630 {
+		t.Errorf("no sessions: want the planned times, got %v-%v", cols["actual_start_min"], cols["actual_end_min"])
+	}
+
+	cols, err = checkInColumns(block, CheckIn{Status: models.StatusDone}, &actualSpan{start: 545, end: 640})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols["actual_start_min"] != 545 || cols["actual_end_min"] != 640 {
+		t.Errorf("with sessions: want the session span, got %v-%v", cols["actual_start_min"], cols["actual_end_min"])
+	}
+
+	cols, err = checkInColumns(block, CheckIn{Status: models.StatusPartial, ActualEndMin: min(600)}, &actualSpan{start: 545, end: 640})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols["actual_start_min"] != 545 || cols["actual_end_min"] != 600 {
+		t.Errorf("an edited time wins per field, got %v-%v", cols["actual_start_min"], cols["actual_end_min"])
+	}
+
+	cols, err = checkInColumns(block, CheckIn{Status: models.StatusSkipped}, &actualSpan{start: 545, end: 640})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols["actual_start_min"] != nil || cols["actual_end_min"] != nil {
+		t.Errorf("skipped keeps no actual times, got %v-%v", cols["actual_start_min"], cols["actual_end_min"])
 	}
 }

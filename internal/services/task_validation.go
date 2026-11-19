@@ -174,7 +174,8 @@ func mergeTaskUpdate(current models.Task, u TaskUpdate) (map[string]any, models.
 const maxTaskNoteChars = 500
 
 // CheckIn is what happened in a block: done / partial / skipped, plus optional actual times
-// (default: the planned times), a focus rating 1-5 and a note.
+// (default: the span of the block's completed focus sessions, or the planned times when it has
+// none), a focus rating 1-5 and a note.
 type CheckIn struct {
 	Status                       string
 	ActualStartMin, ActualEndMin *int
@@ -182,9 +183,44 @@ type CheckIn struct {
 	Note                         *string
 }
 
+// actualSpan is a default for a check-in's actual times, in minutes of the block's local day.
+type actualSpan struct{ start, end int }
+
+// sessionSpan turns the first start and last end of a block's completed focus sessions into
+// minutes of the block's local day in loc, clamped to that day: a session that began before the
+// day starts at 0, one that ended after it ends at 1440. ok is false when the result cannot serve
+// as actual times (end <= start, e.g. a span inside one minute or outside the day), and the
+// planned times stay the default.
+func sessionSpan(date models.Date, first, last time.Time, loc *time.Location) (actualSpan, bool) {
+	day, err := time.ParseInLocation("2006-01-02", string(date), loc)
+	if err != nil {
+		return actualSpan{}, false
+	}
+	next := day.AddDate(0, 0, 1)
+	span := actualSpan{start: minuteOfDay(first, day, next, loc), end: minuteOfDay(last, day, next, loc)}
+	if span.end <= span.start {
+		return actualSpan{}, false
+	}
+	return span, true
+}
+
+// minuteOfDay is t as a wall-clock minute of the local day [day, next), clamped to its ends.
+func minuteOfDay(t, day, next time.Time, loc *time.Location) int {
+	switch local := t.In(loc); {
+	case !local.After(day):
+		return 0
+	case !local.Before(next):
+		return 1440
+	default:
+		return local.Hour()*60 + local.Minute()
+	}
+}
+
 // checkInColumns validates a check-in against the current block and returns the columns to write.
 // Writing the same check-in twice gives the same row (offline replays are harmless).
-func checkInColumns(current models.Task, in CheckIn) (map[string]any, error) {
+// The actual times default to fromSessions (the block's completed focus sessions) when there are
+// any, otherwise to the planned times; a time the client sends wins, per field.
+func checkInColumns(current models.Task, in CheckIn, fromSessions *actualSpan) (map[string]any, error) {
 	switch in.Status {
 	case models.StatusSkipped:
 		return map[string]any{"status": in.Status, "actual_start_min": nil, "actual_end_min": nil,
@@ -194,6 +230,9 @@ func checkInColumns(current models.Task, in CheckIn) (map[string]any, error) {
 		return nil, invalidTask(apierr.TaskStatusInvalid, "check-in status must be done, partial or skipped")
 	}
 	start, end := current.StartMin, current.EndMin
+	if fromSessions != nil {
+		start, end = fromSessions.start, fromSessions.end
+	}
 	if in.ActualStartMin != nil {
 		start = *in.ActualStartMin
 	}

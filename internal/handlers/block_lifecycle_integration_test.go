@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"discipline-backend/internal/contracttest"
 	"discipline-backend/internal/models"
@@ -141,5 +142,85 @@ func TestBlockEvents(t *testing.T) {
 	want := "block_created,block_status_changed,block_checked_in,block_created,block_moved"
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+// sessionSeq numbers the session ids this file makes (clients make UUIDs; the value is opaque).
+var sessionSeq int
+
+// session stores a focus session of user ids[0] on the block, at wall-clock times in the user's zone.
+func (e *taskEnv) session(t *testing.T, blockID uint, day, start, end, outcome string) {
+	t.Helper()
+	loc, err := time.LoadLocation(models.DefaultTimezone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wall := func(hhmm string) time.Time {
+		tm, err := time.ParseInLocation("2006-01-02 15:04", day+" "+hhmm, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tm
+	}
+	sessionSeq++
+	s := &models.FocusSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", sessionSeq), UserID: e.ids[0], BlockID: &blockID,
+		StartedAt: wall(start), PlannedMinutes: 30, BreakMinutes: 5}
+	if end != "" {
+		ended, out := wall(end), outcome
+		s.EndedAt, s.Outcome = &ended, &out
+	}
+	if err := e.db.Create(s).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckIn_ActualTimesComeFromTheCompletedFocusSessions(t *testing.T) {
+	e := newTaskEnv(t)
+	_, id := e.create(t, taskJSON("A", "09:00", "10:30", "2026-10-29"))
+	_, other := e.create(t, taskJSON("B", "14:00", "15:00", "2026-10-29"))
+	e.session(t, id, "2026-10-29", "09:05", "09:35", models.SessionCompleted)
+	e.session(t, id, "2026-10-29", "09:50", "10:40", models.SessionCompleted) // ran past the block
+	e.session(t, id, "2026-10-29", "07:00", "08:00", models.SessionAbandoned) // not time worked
+	e.session(t, other, "2026-10-29", "14:00", "15:30", models.SessionCompleted)
+	e.session(t, id, "2026-10-29", "11:00", "", "") // still running
+
+	path := fmt.Sprintf("/tasks/%d/check-in", id)
+	for range 2 { // and a replay gives the same row
+		b := blockFrom(t, doRequest(e.r, http.MethodPost, path, `{"status":"done","focusRating":5}`))
+		if *b.ActualStartMin != 545 || *b.ActualEndMin != 640 {
+			t.Fatalf("want the completed sessions' span 545-640, got %d-%d", *b.ActualStartMin, *b.ActualEndMin)
+		}
+	}
+	// Another block's sessions stay with that block.
+	b := blockFrom(t, doRequest(e.r, http.MethodPost, fmt.Sprintf("/tasks/%d/check-in", other), `{"status":"done"}`))
+	if *b.ActualStartMin != 840 || *b.ActualEndMin != 930 {
+		t.Fatalf("want 840-930 for the other block, got %d-%d", *b.ActualStartMin, *b.ActualEndMin)
+	}
+	// A time the user edits still wins, per field.
+	b = blockFrom(t, doRequest(e.r, http.MethodPost, path, `{"status":"partial","actualEndMin":615}`))
+	if *b.ActualStartMin != 545 || *b.ActualEndMin != 615 {
+		t.Fatalf("want 545-615, got %d-%d", *b.ActualStartMin, *b.ActualEndMin)
+	}
+}
+
+func TestCheckIn_WithoutACompletedSessionTheActualTimesStayPlanned(t *testing.T) {
+	e := newTaskEnv(t)
+	_, id := e.create(t, taskJSON("A", "09:00", "10:30", "2026-10-29"))
+	e.session(t, id, "2026-10-29", "09:10", "09:40", models.SessionAbandoned)
+	b := blockFrom(t, doRequest(e.r, http.MethodPost, fmt.Sprintf("/tasks/%d/check-in", id), `{"status":"done"}`))
+	if *b.ActualStartMin != 540 || *b.ActualEndMin != 630 {
+		t.Fatalf("want the planned times 540-630, got %d-%d", *b.ActualStartMin, *b.ActualEndMin)
+	}
+}
+
+// A session that crossed midnight is clamped to the block's own day.
+func TestCheckIn_SessionAcrossMidnightIsClampedToTheBlocksDay(t *testing.T) {
+	e := newTaskEnv(t)
+	_, id := e.create(t, taskJSON("Night", "23:00", "24:00", "2026-10-29"))
+	e.session(t, id, "2026-10-29", "23:30", "", "")
+	e.db.Exec(`UPDATE focus_sessions SET ended_at = started_at + interval '50 minutes', outcome = 'completed'`)
+	b := blockFrom(t, doRequest(e.r, http.MethodPost, fmt.Sprintf("/tasks/%d/check-in", id), `{"status":"done"}`))
+	if *b.ActualStartMin != 1410 || *b.ActualEndMin != 1440 {
+		t.Fatalf("want 1410-1440, got %d-%d", *b.ActualStartMin, *b.ActualEndMin)
 	}
 }

@@ -3,6 +3,7 @@ package repositories
 import (
 	"errors"
 	"sort"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -35,6 +36,10 @@ type TaskRepository interface {
 	MoveTask(id, userID uint, key string, build func(current models.Task) (*models.Task, error)) (*models.Task, error)
 	// AdjustDistractions atomically adds delta to the counter, clamped to 0-100.
 	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
+	// CompletedSessionSpan returns the first start and the last end of the block's completed
+	// focus sessions; ok is false when it has none. A session still running or abandoned is not
+	// time worked and is left out.
+	CompletedSessionSpan(userID, blockID uint) (first, last time.Time, ok bool, err error)
 	Delete(id, userID uint) error
 }
 
@@ -217,6 +222,23 @@ func (r *taskRepository) AdjustDistractions(id, userID uint, delta int) (*models
 		return nil, gorm.ErrRecordNotFound
 	}
 	return &task, nil
+}
+
+func (r *taskRepository) CompletedSessionSpan(userID, blockID uint) (time.Time, time.Time, bool, error) {
+	var row struct {
+		First *time.Time
+		Last  *time.Time
+	}
+	res := r.db.Raw(`SELECT min(started_at) AS first, max(ended_at) AS last FROM focus_sessions
+		WHERE user_id = ? AND block_id = ? AND outcome = ? AND ended_at IS NOT NULL`,
+		userID, blockID, models.SessionCompleted).Scan(&row)
+	if res.Error != nil {
+		return time.Time{}, time.Time{}, false, res.Error
+	}
+	if row.First == nil || row.Last == nil {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	return *row.First, *row.Last, true, nil
 }
 
 func (r *taskRepository) Delete(id, userID uint) error {
