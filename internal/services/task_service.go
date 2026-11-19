@@ -19,8 +19,9 @@ type TaskService interface {
 	GetTasks(userID uint, date string) ([]models.Task, error)
 	UpdateTask(id, userID uint, upd TaskUpdate) (*models.Task, error)
 	AdjustDistractions(id, userID uint, delta int) (*models.Task, error)
-	// CheckIn records what happened in a block (done / partial / skipped).
-	CheckIn(id, userID uint, in CheckIn) (*models.Task, error)
+	// CheckIn records what happened in a block (done / partial / skipped). The actual times
+	// default to the span of the block's completed focus sessions, read in loc.
+	CheckIn(id, userID uint, loc *time.Location, in CheckIn) (*models.Task, error)
 	// MoveTask marks the block moved and creates its replacement; key makes replays safe.
 	MoveTask(id, userID uint, key string, date string, startMin, endMin int) (*models.Task, error)
 	SaveWeekPlan(userID uint, weekStart string, tasks []*models.Task) (planID string, replaced int64, err error)
@@ -149,11 +150,28 @@ func (s *taskService) DeleteTask(id, userID uint) error {
 	return s.taskRepo.Delete(id, userID)
 }
 
-func (s *taskService) CheckIn(id, userID uint, in CheckIn) (*models.Task, error) {
+func (s *taskService) CheckIn(id, userID uint, loc *time.Location, in CheckIn) (*models.Task, error) {
+	// What the user actually worked: the span of this block's completed focus sessions. Read
+	// before the update, and only when it can still change the row.
+	var first, last time.Time
+	var hasSessions bool
+	if (in.Status == models.StatusDone || in.Status == models.StatusPartial) &&
+		(in.ActualStartMin == nil || in.ActualEndMin == nil) {
+		var err error
+		if first, last, hasSessions, err = s.taskRepo.CompletedSessionSpan(userID, id); err != nil {
+			return nil, err
+		}
+	}
 	var from string
 	task, err := s.taskRepo.UpdateTask(id, userID, func(current models.Task) (map[string]any, models.Task, bool, error) {
 		from = current.Status
-		cols, err := checkInColumns(current, in)
+		var fromSessions *actualSpan
+		if hasSessions {
+			if span, ok := sessionSpan(current.Date, first, last, loc); ok {
+				fromSessions = &span
+			}
+		}
+		cols, err := checkInColumns(current, in, fromSessions)
 		if err != nil {
 			return nil, current, false, err
 		}

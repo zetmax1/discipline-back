@@ -375,7 +375,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates or replaces the check-in for the user's local date (editable the same day). Send {\"skipped\": true} to skip.",
+                "description": "Creates or replaces the check-in for the user's local date (editable the same day). Send {\"skipped\": true} to skip. With madeAt, a check-in queued offline counts for the local day it was made.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1136,7 +1136,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets what happened in the block. Sending the same check-in again gives the same result.",
+                "description": "Sets what happened in the block. Actual times default to the span of its completed focus sessions, else the planned times. Sending the same check-in again gives the same result.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1603,6 +1603,11 @@
                     "description": "1-5",
                     "type": "integer",
                     "example": 3
+                },
+                "madeAt": {
+                    "description": "the device clock when the user saved the check-in; a check-in queued offline counts for that local day when the clock is believable (at most 24 h old, at most a minute ahead), otherwise for today",
+                    "type": "string",
+                    "example": "2026-10-29T23:58:00Z"
                 },
                 "note": {
                     "type": "string",

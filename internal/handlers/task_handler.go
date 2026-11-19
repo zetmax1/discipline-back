@@ -354,7 +354,8 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
 }
 
-// CheckInRequest records what happened in a block. Actual times default to the planned ones.
+// CheckInRequest records what happened in a block. Actual times default to the span of the
+// block's completed focus sessions, or to the planned times when it has none.
 type CheckInRequest struct {
 	Status         string  `json:"status" binding:"required" example:"done"` // done | partial | skipped
 	ActualStartMin *int    `json:"actualStartMin,omitempty" example:"545"`   // minutes 0-1440
@@ -370,7 +371,7 @@ type BlockResponse struct {
 
 // CheckIn godoc
 // @Summary      Check in a block (done / partial / skipped)
-// @Description  Sets what happened in the block. Sending the same check-in again gives the same result.
+// @Description  Sets what happened in the block. Actual times default to the span of its completed focus sessions, else the planned times. Sending the same check-in again gives the same result.
 // @Tags         Tasks
 // @Accept       json
 // @Produce      json
@@ -394,7 +395,7 @@ func (h *TaskHandler) CheckIn(c *gin.Context) {
 		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
-	task, err := h.taskService.CheckIn(uint(taskID), userID, services.CheckIn{
+	task, err := h.taskService.CheckIn(uint(taskID), userID, userLocation(c), services.CheckIn{
 		Status: req.Status, ActualStartMin: req.ActualStartMin, ActualEndMin: req.ActualEndMin,
 		FocusRating: req.FocusRating, Note: req.Note,
 	})

@@ -91,11 +91,15 @@ type CheckinRequest struct {
 	SleepQuality  *int    `json:"sleepQuality" example:"4"` // 1-5
 	Energy        *int    `json:"energy" example:"3"`       // 1-5
 	Note          *string `json:"note" example:"Slept well"`
+	// MadeAt is the device clock when the user saved the check-in; an offline queue replays it
+	// later. The check-in counts for that local day when the clock is believable (at most 24 h
+	// old, at most a minute ahead), otherwise for today.
+	MadeAt *time.Time `json:"madeAt,omitempty" example:"2026-10-29T23:58:00Z"`
 }
 
 // SaveCheckin godoc
 // @Summary      Save today's morning check-in
-// @Description  Creates or replaces the check-in for the user's local date (editable the same day). Send {"skipped": true} to skip.
+// @Description  Creates or replaces the check-in for the user's local date (editable the same day). Send {"skipped": true} to skip. With madeAt, a check-in queued offline counts for the local day it was made.
 // @Tags         Daily
 // @Accept       json
 // @Produce      json
@@ -110,7 +114,8 @@ func (h *DailyHandler) SaveCheckin(c *gin.Context) {
 		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
 	}
-	saved, err := h.daily.SaveCheckin(c.MustGet("userID").(uint), models.Date(userToday(c)), userLocation(c), services.CheckinInput{
+	loc := userLocation(c)
+	saved, err := h.daily.SaveCheckin(c.MustGet("userID").(uint), services.CheckinDay(req.MadeAt, nowFunc(), loc), loc, services.CheckinInput{
 		Skipped: req.Skipped, SleepStartMin: req.SleepStartMin, SleepEndMin: req.SleepEndMin,
 		SleepQuality: req.SleepQuality, Energy: req.Energy, Note: req.Note,
 	})

@@ -106,6 +106,19 @@ func invalidCheckin(msg string) error {
 	return apierr.Wrap(ErrInvalidCheckin, apierr.CheckinInvalid, msg)
 }
 
+// CheckinDay is the local day in loc that a check-in counts for: the day the client made it, when
+// the client clock is believable (at most maxOfflineAge old and at most maxClockAhead ahead of
+// now, exactly the bounds a queued session start uses), otherwise today. So a check-in saved at
+// 23:58 offline and synced at 00:05 still counts for the day it was made, while a wrong device
+// clock can only ever fall back to today.
+func CheckinDay(madeAt *time.Time, now time.Time, loc *time.Location) models.Date {
+	day := now
+	if madeAt != nil && !madeAt.After(now.Add(maxClockAhead)) && madeAt.After(now.Add(-maxOfflineAge)) {
+		day = *madeAt
+	}
+	return models.Date(day.In(loc).Format("2006-01-02"))
+}
+
 // SleepMinutes is the real time between sleep start and end for the check-in of day `date` in loc:
 // a start after the end began on the evening before. Counted in real time, so a DST night is
 // an hour shorter or longer than the wall clock suggests.

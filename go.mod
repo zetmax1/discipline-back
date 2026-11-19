@@ -2,7 +2,7 @@ module discipline-backend
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/getsentry/sentry-go v0.50.0
