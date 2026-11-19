@@ -358,3 +358,62 @@ func TestDailyLoopEvents_AreWrittenOnceEvenWhenRequestsAreReplayed(t *testing.T)
 		t.Fatalf("props carry facts, never personal data: %s", props)
 	}
 }
+
+// A check-in made just before midnight and synced after it counts for the day it was made.
+func TestMorningCheckin_QueuedOfflineCountsForTheLocalDayItWasMade(t *testing.T) {
+	const tz = "Asia/Tashkent"
+	e := newDailyEnv(t, tz)
+	at(t, tz, "2026-10-30 00:05") // the queue drains just after midnight
+	code, body := e.call(t, http.MethodPut, "/checkins/today",
+		`{"sleepStartMin":1410,"sleepEndMin":420,"sleepQuality":4,"energy":3,"madeAt":"2026-10-29T23:58:00+05:00"}`)
+	if code != http.StatusOK {
+		t.Fatalf("put: %d %v", code, body)
+	}
+	if got := body["checkin"].(map[string]any)["date"]; got != "2026-10-29" {
+		t.Fatalf("want the check-in on the day it was made (2026-10-29), got %v", got)
+	}
+	raw, _ := json.Marshal(body)
+	contracttest.Validate(t, "daily", "checkin_response", raw)
+
+	// Today is still open, so today's prompt comes back.
+	if code, body = e.call(t, http.MethodGet, "/checkins/today", ""); code != http.StatusOK ||
+		body["date"] != "2026-10-30" || body["checkin"] != nil {
+		t.Fatalf("today must still be open, got %d %v", code, body)
+	}
+
+	// A replay of the same queued request changes nothing and stays on the same day.
+	if code, body = e.call(t, http.MethodPut, "/checkins/today",
+		`{"sleepStartMin":1410,"sleepEndMin":420,"sleepQuality":4,"energy":3,"madeAt":"2026-10-29T23:58:00+05:00"}`); code != http.StatusOK ||
+		body["checkin"].(map[string]any)["date"] != "2026-10-29" {
+		t.Fatalf("replay: %d %v", code, body)
+	}
+	var days []string
+	if err := e.db.Raw(`SELECT date::text FROM checkins WHERE user_id = ? ORDER BY date`, e.userID).Scan(&days).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 1 || days[0] != "2026-10-29" {
+		t.Fatalf("want exactly one check-in on 2026-10-29, got %v", days)
+	}
+}
+
+// A device clock outside the bounds a queued session start uses falls back to today.
+func TestMorningCheckin_UnbelievableClientClockFallsBackToToday(t *testing.T) {
+	const tz = "Asia/Tashkent"
+	for _, c := range []struct{ name, madeAt string }{
+		{"days old", "2026-10-20T10:00:00+05:00"},
+		{"tomorrow (clock skew)", "2026-10-31T09:00:00+05:00"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newDailyEnv(t, tz)
+			at(t, tz, "2026-10-30 00:05")
+			code, body := e.call(t, http.MethodPut, "/checkins/today",
+				fmt.Sprintf(`{"sleepStartMin":1410,"sleepEndMin":420,"sleepQuality":4,"energy":3,"madeAt":%q}`, c.madeAt))
+			if code != http.StatusOK {
+				t.Fatalf("put: %d %v", code, body)
+			}
+			if got := body["checkin"].(map[string]any)["date"]; got != "2026-10-30" {
+				t.Fatalf("want today (2026-10-30), got %v", got)
+			}
+		})
+	}
+}
