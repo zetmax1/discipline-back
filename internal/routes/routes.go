@@ -93,7 +93,12 @@ func SetupRoutes(
 			protected.POST("/tasks", taskHandler.CreateTask)
 			protected.POST("/tasks/bulk", taskHandler.BulkCreateTasks)
 			protected.PUT("/tasks/plan", taskHandler.SavePlan)
-			protected.GET("/tasks", taskHandler.GetTasks)
+			planner := featureHandler.Enabled("F13") && plannerHandler != nil // categories and recurring blocks
+			if planner {
+				protected.GET("/tasks", handlers.WithRange(plannerHandler.Recurring.Range, taskHandler.GetTasks))
+			} else {
+				protected.GET("/tasks", taskHandler.GetTasks)
+			}
 			protected.PUT("/tasks/:id", taskHandler.UpdateTask)
 			protected.POST("/tasks/:id/distractions", taskHandler.AdjustDistractions)
 			protected.DELETE("/tasks/:id", taskHandler.DeleteTask)
@@ -102,8 +107,9 @@ func SetupRoutes(
 				protected.POST("/tasks/:id/move", taskHandler.MoveTask)
 				handlers.RegisterDailyRoutes(protected, dailyHandler)
 			}
-			if featureHandler.Enabled("F13") && plannerHandler != nil { // categories and recurring blocks
+			if planner {
 				handlers.RegisterCategoryRoutes(protected, plannerHandler.Categories)
+				handlers.RegisterRecurringRoutes(protected, plannerHandler.Recurring)
 			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)

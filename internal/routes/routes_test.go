@@ -164,7 +164,7 @@ func TestPlannerRoutesOnlyWithF13(t *testing.T) {
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
 		SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
-			handlers.NewFeatureHandler(flags), &handlers.DailyHandler{}, &handlers.PlannerHandlers{Categories: &handlers.CategoryHandler{}},
+			handlers.NewFeatureHandler(flags), &handlers.DailyHandler{}, &handlers.PlannerHandlers{Categories: &handlers.CategoryHandler{}, Recurring: &handlers.RecurringHandler{}},
 			"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 			"internal-secret-for-tests-0123456789", false,
 			func(uint) (*middleware.AuthUser, error) {

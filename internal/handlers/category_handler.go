@@ -186,4 +186,5 @@ func RegisterCategoryRoutes(r gin.IRoutes, h *CategoryHandler) {
 // PlannerHandlers groups the F13 handlers SetupRoutes registers when FEATURE_F13 is on.
 type PlannerHandlers struct {
 	Categories *CategoryHandler
+	Recurring  *RecurringHandler
 }
