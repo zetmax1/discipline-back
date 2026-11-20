@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -311,6 +312,36 @@ func (h *RecurringHandler) Range(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, res)
+}
+
+// PlanDay wraps the single-day read GET /tasks?date=D: D's recurring occurrences are created
+// first, with the range's bounds (from today, at most 8 weeks ahead), so Today shows them
+// although the Planner was never opened (M6). An unreadable date plans nothing and is left to next.
+func (h *RecurringHandler) PlanDay(next gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if d := c.Query("date"); d != "" {
+			if t, err := time.Parse("2006-01-02", d); err == nil && t.Format("2006-01-02") == d {
+				if err := h.svc.Plan(c.MustGet("userID").(uint), d, d, userToday(c)); err != nil {
+					respondRecurringError(c, err)
+					return
+				}
+			}
+		}
+		next(c)
+	}
+}
+
+// PlanToday wraps a read whose answer covers the user's today (the dashboard's metrics): today's
+// occurrences are created first (M6).
+func (h *RecurringHandler) PlanToday(next gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		today := userToday(c)
+		if err := h.svc.Plan(c.MustGet("userID").(uint), today, today, today); err != nil {
+			respondRecurringError(c, err)
+			return
+		}
+		next(c)
+	}
 }
 
 // WithRange serves GET /tasks?startDate=&endDate= with ranged and anything else with plain.

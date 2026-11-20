@@ -49,6 +49,9 @@ type RecurringService interface {
 	DeleteRule(id, userID uint, fromDate string, today string) error
 	// Range materializes [max(start, today), min(end, today+56)] and returns start..end.
 	Range(userID uint, start, end, today string) (*RangeResult, error)
+	// Plan creates the missing occurrences of start..end with the range's bounds (from today, at
+	// most 8 weeks ahead), for reads that return blocks without the range form (M6).
+	Plan(userID uint, start, end, today string) error
 	CancelOccurrence(taskID, userID uint) error
 	PlaceAnyway(ruleID, userID uint, date string) (*models.Task, error)
 	SkipConflict(ruleID, userID uint, date string) error
@@ -216,12 +219,37 @@ func (s *recurringService) Range(userID uint, start, end, today string) (*RangeR
 	if days := int(te.Sub(ts).Hours()/24) + 1; days > MaxRangeDays {
 		return nil, invalidRule(apierr.RangeTooLong, "a range covers at most 42 days")
 	}
+	limit, err := s.plan(userID, start, end, today)
+	if err != nil {
+		return nil, err
+	}
+	tasks, exceptions, err := s.repo.Range(userID, models.Date(start), models.Date(end))
+	if err != nil {
+		return nil, err
+	}
+	if tasks == nil {
+		tasks = []models.Task{}
+	}
+	return &RangeResult{Tasks: tasks, Exceptions: exceptions, Truncated: end > limit}, nil
+}
+
+func (s *recurringService) Plan(userID uint, start, end, today string) error {
+	_, err := s.plan(userID, start, end, today)
+	return err
+}
+
+// plan materializes [max(start, today), min(end, today+56)] and records the events; it returns
+// the last date that may be planned. start and end are valid dates, start first.
+func (s *recurringService) plan(userID uint, start, end, today string) (string, error) {
 	tt, _ := time.Parse("2006-01-02", today)
 	limit := tt.AddDate(0, 0, PlanAheadDays).Format("2006-01-02")
 	from, to := max(start, today), min(end, limit)
+	if from > to {
+		return limit, nil
+	}
 	m, err := s.repo.Materialize(userID, models.Date(from), models.Date(to))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	for _, t := range m.Created {
 		props := events.Props{"source": t.Source, "minutes": t.EndMin - t.StartMin, "moved": false}
@@ -236,14 +264,7 @@ func (s *recurringService) Range(userID uint, start, end, today string) (*RangeR
 		s.events.Record(userID, events.WeekPlanned, events.Props{
 			"created": len(m.Created), "conflicts": m.Conflicts, "days": int(tl.Sub(tf).Hours()/24) + 1})
 	}
-	tasks, exceptions, err := s.repo.Range(userID, models.Date(start), models.Date(end))
-	if err != nil {
-		return nil, err
-	}
-	if tasks == nil {
-		tasks = []models.Task{}
-	}
-	return &RangeResult{Tasks: tasks, Exceptions: exceptions, Truncated: end > limit}, nil
+	return limit, nil
 }
 
 func (s *recurringService) CancelOccurrence(taskID, userID uint) error {

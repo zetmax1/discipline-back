@@ -95,7 +95,7 @@ func SetupRoutes(
 			protected.PUT("/tasks/plan", taskHandler.SavePlan)
 			planner := featureHandler.Enabled("F13") && plannerHandler != nil // categories and recurring blocks
 			if planner {
-				protected.GET("/tasks", handlers.WithRange(plannerHandler.Recurring.Range, taskHandler.GetTasks))
+				protected.GET("/tasks", handlers.WithRange(plannerHandler.Recurring.Range, plannerHandler.Recurring.PlanDay(taskHandler.GetTasks)))
 			} else {
 				protected.GET("/tasks", taskHandler.GetTasks)
 			}
@@ -115,7 +115,11 @@ func SetupRoutes(
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
 
 			// Dashboard: today's metrics come from the analytics service's single metrics module
-			protected.GET("/dashboard/today", analyticsHandler.GetToday)
+			if planner { // today's recurring blocks exist before the metrics are read (M6)
+				protected.GET("/dashboard/today", plannerHandler.Recurring.PlanToday(analyticsHandler.GetToday))
+			} else {
+				protected.GET("/dashboard/today", analyticsHandler.GetToday)
+			}
 
 			// Analytics (proxied to Python service with strict rate limiting)
 			analytics := protected.Group("/analytics")
