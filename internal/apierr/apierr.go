@@ -66,6 +66,19 @@ const (
 	DaysInvalid               Code = "days_invalid"
 	AnalyticsUnavailable      Code = "analytics_unavailable"
 	AnalyticsValidationFailed Code = "analytics_validation_failed"
+
+	CategoryNotFound         Code = "category_not_found"
+	CategoryInUse            Code = "category_in_use"
+	CategoryNameTaken        Code = "category_name_taken"
+	CategoryInvalid          Code = "category_invalid"
+	CategoryKindInvalid      Code = "category_kind_invalid"
+	CategoryColorInvalid     Code = "category_color_invalid"
+	CategoryIconInvalid      Code = "category_icon_invalid"
+	RecurringRuleNotFound    Code = "recurring_rule_not_found"
+	RecurringDatesInvalid    Code = "recurring_dates_invalid"
+	RecurringWeekdaysInvalid Code = "recurring_weekdays_invalid"
+	RangeTooLong             Code = "range_too_long"
+	OccurrenceNotFound       Code = "occurrence_not_found"
 )
 
 // All lists every code the API can send.
@@ -78,6 +91,9 @@ var All = []Code{
 	TaskFocusRatingInvalid, TaskNoteTooLong, TaskNotMovable, IdempotencyKeyRequired,
 	CheckinInvalid, SessionInvalid, SessionActive, ParkingNoteInvalid, ShutdownInvalid,
 	WordNotFound, WordIDInvalid, DateInvalid, RangeInvalid, DaysInvalid, AnalyticsUnavailable, AnalyticsValidationFailed,
+	CategoryNotFound, CategoryInUse, CategoryNameTaken, CategoryInvalid, CategoryKindInvalid, CategoryColorInvalid,
+	CategoryIconInvalid, RecurringRuleNotFound, RecurringDatesInvalid, RecurringWeekdaysInvalid, RangeTooLong,
+	OccurrenceNotFound,
 }
 
 func body(code Code, msg string, extra []gin.H) gin.H {

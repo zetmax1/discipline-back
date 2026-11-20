@@ -22,6 +22,9 @@ type TaskMerge func(current models.Task) (cols map[string]any, merged models.Tas
 type TaskRepository interface {
 	// CreateTasks inserts one user's tasks atomically, rejecting overlaps.
 	CreateTasks(userID uint, tasks []*models.Task) error
+	// CreateTaskOnce inserts one block. With an idempotency key, a replay fills task with the
+	// block the first call created and reports replayed = true.
+	CreateTaskOnce(task *models.Task, key string) (replayed bool, err error)
 	FindByID(id, userID uint) (*models.Task, error)
 	FindByUser(userID uint) ([]models.Task, error)
 	FindByUserAndDate(userID uint, date string) ([]models.Task, error)
@@ -112,12 +115,78 @@ func (r *taskRepository) CreateTasks(userID uint, tasks []*models.Task) error {
 			return err
 		}
 		for _, t := range tasks {
+			if err := resolveCategory(tx, userID, t); err != nil {
+				return err
+			}
 			if err := checkOverlap(tx, userID, t.Date, t.StartTime, t.EndTime, 0); err != nil {
 				return err
 			}
 		}
-		return tx.CreateInBatches(tasks, 100).Error
+		if err := tx.CreateInBatches(tasks, 100).Error; err != nil {
+			return err
+		}
+		return attachKinds(tx, tasks)
 	})
+}
+
+func (r *taskRepository) CreateTaskOnce(task *models.Task, key string) (bool, error) {
+	if key == "" {
+		return false, r.CreateTasks(task.UserID, []*models.Task{task})
+	}
+	replayed := false
+	userID := task.UserID
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockForKey(tx, userID); err != nil {
+			return err
+		}
+		earlier, found, err := earlierResource(tx, userID, key)
+		if err != nil {
+			return err
+		}
+		if found {
+			replayed = true
+			*task = models.Task{}
+			if err := tx.Where("id = ? AND user_id = ?", earlier, userID).First(task).Error; err != nil {
+				return err
+			}
+			return attachKinds(tx, []*models.Task{task})
+		}
+		if err := resolveCategory(tx, userID, task); err != nil {
+			return err
+		}
+		if err := checkOverlap(tx, userID, task.Date, task.StartTime, task.EndTime, 0); err != nil {
+			return err
+		}
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		if err := rememberKey(tx, userID, key, task.ID); err != nil {
+			return err
+		}
+		return attachKinds(tx, []*models.Task{task})
+	})
+	return replayed, err
+}
+
+// resolveCategory checks a block's categoryId belongs to the user and writes the matching legacy
+// string next to it. A block sent with only the legacy string is resolved by the trigger.
+func resolveCategory(tx *gorm.DB, userID uint, t *models.Task) error {
+	if t.CategoryID == nil {
+		// Only the legacy string: resolved here, not by the trigger (M3), so the answer and the
+		// block_created event carry the category (M8). The legacy string is kept as sent.
+		id, err := legacyCategoryID(tx, userID, t.Category)
+		if err != nil {
+			return err
+		}
+		t.CategoryID = &id
+		return nil
+	}
+	kind, err := categoryKind(tx, *t.CategoryID, userID)
+	if err != nil {
+		return err
+	}
+	t.Category = models.LegacyCategory(kind)
+	return nil
 }
 
 func (r *taskRepository) ReplaceWeekPlan(userID uint, weekStart, weekEnd models.Date, tasks []*models.Task) (int64, error) {
@@ -136,6 +205,9 @@ func (r *taskRepository) ReplaceWeekPlan(userID uint, weekStart, weekEnd models.
 		}
 		replaced = res.RowsAffected
 		for _, t := range tasks {
+			if err := resolveCategory(tx, userID, t); err != nil {
+				return err
+			}
 			if err := checkOverlap(tx, userID, t.Date, t.StartTime, t.EndTime, 0); err != nil {
 				return err
 			}
@@ -156,7 +228,7 @@ func (r *taskRepository) FindByID(id, userID uint) (*models.Task, error) {
 	if err := r.db.Where("id = ? AND user_id = ?", id, userID).First(&task).Error; err != nil {
 		return nil, err
 	}
-	return &task, nil
+	return &task, attachKinds(r.db, []*models.Task{&task})
 }
 
 func (r *taskRepository) FindByUser(userID uint) ([]models.Task, error) {
@@ -164,7 +236,7 @@ func (r *taskRepository) FindByUser(userID uint) ([]models.Task, error) {
 	if err := r.db.Where("user_id = ?", userID).Order("date DESC, start_time ASC").Find(&tasks).Error; err != nil {
 		return nil, err
 	}
-	return tasks, nil
+	return tasks, attachKindsList(r.db, tasks)
 }
 
 func (r *taskRepository) FindByUserAndDate(userID uint, date string) ([]models.Task, error) {
@@ -172,7 +244,7 @@ func (r *taskRepository) FindByUserAndDate(userID uint, date string) ([]models.T
 	if err := r.db.Where("user_id = ? AND date = ?", userID, date).Order("start_time ASC").Find(&tasks).Error; err != nil {
 		return nil, err
 	}
-	return tasks, nil
+	return tasks, attachKindsList(r.db, tasks)
 }
 
 func (r *taskRepository) UpdateTask(id, userID uint, merge TaskMerge) (*models.Task, error) {
@@ -190,6 +262,12 @@ func (r *taskRepository) UpdateTask(id, userID uint, merge TaskMerge) (*models.T
 		if err != nil {
 			return err
 		}
+		if err := categoryColumns(tx, userID, current, cols); err != nil {
+			return err
+		}
+		if err := occurrenceColumns(tx, userID, current, cols); err != nil {
+			return err
+		}
 		// A skipped or moved block occupies no time; reviving one claims its slot again.
 		revived := !models.OccupiesTime(current.Status) && models.OccupiesTime(merged.Status)
 		if models.OccupiesTime(merged.Status) && (timesMoved || revived) {
@@ -202,12 +280,87 @@ func (r *taskRepository) UpdateTask(id, userID uint, merge TaskMerge) (*models.T
 				return err
 			}
 		}
-		return tx.Where("id = ? AND user_id = ?", id, userID).First(&out).Error
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&out).Error; err != nil {
+			return err
+		}
+		return attachKinds(tx, []*models.Task{&out})
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// categoryColumns completes an update's category columns: a categoryId must be the user's and
+// brings its legacy string; a legacy string alone is resolved to its category (M3);
+// a block that still has no category (an empty legacy string) gets Personal now that it is touched.
+func categoryColumns(tx *gorm.DB, userID uint, current models.Task, cols map[string]any) error {
+	if id, ok := cols["category_id"].(uint); ok {
+		kind, err := categoryKind(tx, id, userID)
+		if err != nil {
+			return err
+		}
+		cols["category"] = models.LegacyCategory(kind)
+		return nil
+	}
+	if legacy, ok := cols["category"].(string); ok {
+		id, err := legacyCategoryID(tx, userID, legacy)
+		if err != nil {
+			return err
+		}
+		cols["category_id"] = id
+		return nil
+	}
+	if current.CategoryID == nil {
+		id, err := personalCategoryID(tx, userID)
+		if err != nil {
+			return err
+		}
+		if id != 0 {
+			cols["category_id"] = id
+		}
+	}
+	return nil
+}
+
+// occurrenceColumns marks an occurrence of a recurring rule as edited by hand ("this one") when
+// what it plans changes; moving it to another date records where it came from and writes a
+// `moved` exception, so materialization does not plan the original date again.
+func occurrenceColumns(tx *gorm.DB, userID uint, current models.Task, cols map[string]any) error {
+	if current.RecurringRuleID == nil {
+		return nil
+	}
+	for _, c := range []string{"name", "category", "category_id", "start_time", "end_time", "date"} {
+		if _, ok := cols[c]; ok {
+			cols["recurring_edited"] = true
+			break
+		}
+	}
+	newDate, ok := cols["date"].(models.Date)
+	if !ok || newDate == current.Date {
+		return nil
+	}
+	original := current.Date
+	if current.OriginalDate != nil {
+		original = *current.OriginalDate
+	}
+	cols["original_date"] = original
+	return addException(tx, userID, *current.RecurringRuleID, original, ExceptionMoved)
+}
+
+// Reasons a recurring rule has no block on a date (never a miss).
+const (
+	ExceptionCancelled = "cancelled"
+	ExceptionConflict  = "conflict"
+	ExceptionMoved     = "moved"
+)
+
+// addException records that rule has no block on date; an existing exception keeps its reason
+// unless the new one is a cancellation, which wins.
+func addException(tx *gorm.DB, userID, ruleID uint, date models.Date, reason string) error {
+	return tx.Exec(`INSERT INTO recurring_exceptions (user_id, rule_id, date, reason) VALUES (?, ?, ?, ?)
+		ON CONFLICT (rule_id, date) DO UPDATE SET reason = CASE WHEN EXCLUDED.reason = 'cancelled'
+			THEN 'cancelled' ELSE recurring_exceptions.reason END`, userID, ruleID, date, reason).Error
 }
 
 func (r *taskRepository) AdjustDistractions(id, userID uint, delta int) (*models.Task, error) {
@@ -241,15 +394,27 @@ func (r *taskRepository) CompletedSessionSpan(userID, blockID uint) (time.Time, 
 	return *row.First, *row.Last, true, nil
 }
 
+// Delete removes a block. An occurrence of a recurring rule also gets a cancelled exception for
+// its date, in the same transaction, so the next read does not create it again (F13 review M1).
 func (r *taskRepository) Delete(id, userID uint) error {
-	result := r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Task{})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var t models.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", id, userID).
+			First(&t).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Task{}).Error; err != nil {
+			return err
+		}
+		if t.RecurringRuleID == nil {
+			return nil
+		}
+		day := t.Date
+		if t.OriginalDate != nil {
+			day = *t.OriginalDate
+		}
+		return addException(tx, userID, *t.RecurringRuleID, day, ExceptionCancelled)
+	})
 }
 
 // ErrTaskNotMovable is returned when moving a block that is already done, partial or moved.
@@ -267,7 +432,10 @@ func (r *taskRepository) MoveTask(id, userID uint, key string, build func(curren
 			return err
 		}
 		if len(earlier) > 0 {
-			return tx.Where("id = ? AND user_id = ?", earlier[0], userID).First(&out).Error
+			if err := tx.Where("id = ? AND user_id = ?", earlier[0], userID).First(&out).Error; err != nil {
+				return err
+			}
+			return attachKinds(tx, []*models.Task{&out})
 		}
 		var current models.Task
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -290,8 +458,20 @@ func (r *taskRepository) MoveTask(id, userID uint, key string, build func(curren
 		if err := checkOverlap(tx, userID, next.Date, next.StartTime, next.EndTime, 0); err != nil {
 			return err
 		}
+		if next.CategoryID == nil {
+			if id, err := personalCategoryID(tx, userID); err != nil {
+				return err
+			} else if id != 0 {
+				next.CategoryID = &id
+			}
+		}
 		if err := tx.Create(next).Error; err != nil {
 			return err
+		}
+		if next.RecurringRuleID != nil && next.OriginalDate != nil {
+			if err := addException(tx, userID, *next.RecurringRuleID, *next.OriginalDate, ExceptionMoved); err != nil {
+				return err
+			}
 		}
 		if err := tx.Exec(`DELETE FROM idempotency_keys WHERE created_at < now() - interval '1 day'`).Error; err != nil {
 			return err
@@ -301,7 +481,7 @@ func (r *taskRepository) MoveTask(id, userID uint, key string, build func(curren
 			return err
 		}
 		out = *next
-		return nil
+		return attachKinds(tx, []*models.Task{&out})
 	})
 	if err != nil {
 		return nil, err

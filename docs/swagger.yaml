@@ -45,6 +45,35 @@ definitions:
         example: Discipline is the bridge between goals and accomplishment.
         type: string
     type: object
+  handlers.CategoryListResponse:
+    properties:
+      categories:
+        items:
+          $ref: '#/definitions/models.Category'
+        type: array
+    type: object
+  handlers.CategoryRequest:
+    properties:
+      color:
+        description: '#RRGGBB'
+        example: '#8B5CF6'
+        type: string
+      icon:
+        example: book-open
+        type: string
+      kind:
+        description: focus|study|admin|exercise|rest|personal; create only
+        example: study
+        type: string
+      name:
+        example: Reading
+        type: string
+    type: object
+  handlers.CategoryResponse:
+    properties:
+      category:
+        $ref: '#/definitions/models.Category'
+    type: object
   handlers.CheckInRequest:
     properties:
       actualEndMin:
@@ -75,9 +104,10 @@ definitions:
         example: 3
         type: integer
       madeAt:
-        description: the device clock when the user saved the check-in; a check-in
-          queued offline counts for that local day when the clock is believable (at
-          most 24 h old, at most a minute ahead), otherwise for today
+        description: |-
+          MadeAt is the device clock when the user saved the check-in; an offline queue replays it
+          later. The check-in counts for that local day when the clock is believable (at most 24 h
+          old, at most a minute ahead), otherwise for today.
         example: "2026-10-29T23:58:00Z"
         type: string
       note:
@@ -116,9 +146,13 @@ definitions:
   handlers.CreateTaskRequest:
     properties:
       category:
-        description: deep-work|study|admin|gym|rest
+        description: 'legacy: deep-work|study|admin|gym|rest; needed without categoryId'
         example: deep-work
         type: string
+      categoryId:
+        description: 'F13: one of the user''s categories'
+        example: 3
+        type: integer
       date:
         description: YYYY-MM-DD
         example: "2026-03-02"
@@ -140,7 +174,6 @@ definitions:
         example: "09:00"
         type: string
     required:
-    - category
     - date
     - endTime
     - energy
@@ -263,6 +296,48 @@ definitions:
     - email
     - name
     - password
+    type: object
+  handlers.RuleListResponse:
+    properties:
+      rules:
+        items:
+          $ref: '#/definitions/models.RecurringRule'
+        type: array
+    type: object
+  handlers.RuleRequest:
+    properties:
+      categoryId:
+        example: 4
+        type: integer
+      endMin:
+        example: 1170
+        type: integer
+      name:
+        example: Gym
+        type: string
+      startMin:
+        example: 1080
+        type: integer
+      validFrom:
+        example: "2026-11-02"
+        type: string
+      validTo:
+        example: "2026-12-31"
+        type: string
+      weekdays:
+        description: 'ISO: Mon = 1 … Sun = 7'
+        example:
+        - 1
+        - 3
+        - 5
+        items:
+          type: integer
+        type: array
+    type: object
+  handlers.RuleResponse:
+    properties:
+      rule:
+        $ref: '#/definitions/models.RecurringRule'
     type: object
   handlers.SavePlanRequest:
     properties:
@@ -407,6 +482,9 @@ definitions:
       category:
         example: study
         type: string
+      categoryId:
+        example: 3
+        type: integer
       date:
         example: "2026-03-02"
         type: string
@@ -434,6 +512,23 @@ definitions:
       user:
         $ref: '#/definitions/models.User'
     type: object
+  models.Category:
+    properties:
+      color:
+        type: string
+      icon:
+        type: string
+      id:
+        type: integer
+      kind:
+        type: string
+      name:
+        type: string
+      nameCustom:
+        type: boolean
+      systemKey:
+        type: string
+    type: object
   models.Checkin:
     properties:
       date:
@@ -455,6 +550,29 @@ definitions:
         description: '> SleepEndMin: began the evening before'
         type: integer
     type: object
+  models.RecurringRule:
+    properties:
+      categoryId:
+        type: integer
+      endMin:
+        type: integer
+      id:
+        type: integer
+      name:
+        type: string
+      splitFromRuleId:
+        type: integer
+      startMin:
+        type: integer
+      validFrom:
+        type: string
+      validTo:
+        type: string
+      weekdays:
+        items:
+          type: integer
+        type: array
+    type: object
   models.Task:
     properties:
       actualEndMin:
@@ -463,6 +581,14 @@ definitions:
         description: 'Lifecycle (F1): what actually happened.'
         type: integer
       category:
+        type: string
+      categoryId:
+        description: |-
+          F13: the category (NULL only for legacy rows until migration 00015) and, for an occurrence
+          of a recurring rule, the rule, the date it was planned for when it moved, and whether the
+          user edited it by hand. CategoryKind is read from the category, never stored here.
+        type: integer
+      categoryKind:
         type: string
       created_at:
         type: string
@@ -487,9 +613,15 @@ definitions:
         type: string
       note:
         type: string
+      originalDate:
+        type: string
       planId:
         description: set for smart-schedule blocks
         type: string
+      recurringEdited:
+        type: boolean
+      recurringRuleId:
+        type: integer
       source:
         description: manual | smart-schedule
         type: string
@@ -753,6 +885,132 @@ paths:
       summary: Register a new user
       tags:
       - Auth
+  /categories:
+    get:
+      description: The user's categories; the six defaults are created the first time
+        they are read.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.CategoryListResponse'
+      security:
+      - BearerAuth: []
+      summary: List categories
+      tags:
+      - Categories
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 8-100 characters; a replay returns the first category
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: name, color, icon, kind
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.CategoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a category
+      tags:
+      - Categories
+  /categories/{id}:
+    delete:
+      description: A category in use answers 409 unless reassignTo names another of
+        the user's categories; blocks and rules then move there in one transaction.
+        Defaults cannot be deleted.
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Category that takes over its blocks and rules
+        in: query
+        name: reassignTo
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a category
+      tags:
+      - Categories
+    put:
+      consumes:
+      - application/json
+      description: Name, colour and icon; the kind never changes. A new name marks
+        a default as renamed.
+      parameters:
+      - description: Category ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.CategoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a category
+      tags:
+      - Categories
   /checkins/today:
     get:
       description: '"Today" is the user''s local date. checkin is null until done
@@ -951,6 +1209,195 @@ paths:
       summary: Get motivational quote
       tags:
       - Quotes
+  /recurring-rules:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.RuleListResponse'
+      security:
+      - BearerAuth: []
+      summary: List recurring rules
+      tags:
+      - Recurring
+    post:
+      consumes:
+      - application/json
+      description: Weekdays are ISO (Mon = 1 … Sun = 7), sorted and de-duplicated.
+        Occurrences appear when a range is read.
+      parameters:
+      - description: 8-100 characters; a replay returns the first rule
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: The rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.RuleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.RuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a recurring rule
+      tags:
+      - Recurring
+  /recurring-rules/{id}:
+    delete:
+      description: scope=all removes the rule and its future untouched occurrences;
+        scope=following&fromDate= ends it the day before. Occurrences that happened
+        stay as history.
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: all (default) or following
+        in: query
+        name: scope
+        type: string
+      - description: YYYY-MM-DD, with scope=following
+        in: query
+        name: fromDate
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a recurring rule
+      tags:
+      - Recurring
+    put:
+      consumes:
+      - application/json
+      description: scope=all changes the rule and its future untouched occurrences
+        (the past is never rewritten); scope=following&fromDate= splits it, keeping
+        occurrences edited by hand.
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: all (default) or following
+        in: query
+        name: scope
+        type: string
+      - description: YYYY-MM-DD, with scope=following
+        in: query
+        name: fromDate
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.RuleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.RuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Edit a recurring rule
+      tags:
+      - Recurring
+  /recurring-rules/{id}/occurrences/{date}/place-anyway:
+    post:
+      description: Creates the occurrence that a clash left out (a conflict exception),
+        overlapping on purpose.
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: YYYY-MM-DD
+        in: path
+        name: date
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.BlockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Place a conflicting occurrence anyway
+      tags:
+      - Recurring
+  /recurring-rules/{id}/occurrences/{date}/skip:
+    post:
+      description: Turns a conflict exception into a cancellation; nothing is counted
+        as missed.
+      parameters:
+      - description: Rule ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: YYYY-MM-DD
+        in: path
+        name: date
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Skip a conflicting occurrence this week
+      tags:
+      - Recurring
   /sessions:
     get:
       parameters:
@@ -1073,13 +1520,23 @@ paths:
       - Daily
   /tasks:
     get:
-      description: Returns tasks for the authenticated user, optionally filtered by
-        date
+      description: 'Returns tasks for the authenticated user, optionally filtered
+        by date. With FEATURE_F13, startDate and endDate (at most 42 days) read a
+        range instead: missing recurring occurrences are created from today up to
+        8 weeks ahead, and the body is {tasks, exceptions, truncated}.'
       parameters:
       - description: Filter by date (YYYY-MM-DD)
         example: "2026-03-02"
         in: query
         name: date
+        type: string
+      - description: 'F13: first date of a range (YYYY-MM-DD)'
+        in: query
+        name: startDate
+        type: string
+      - description: 'F13: last date of a range (YYYY-MM-DD)'
+        in: query
+        name: endDate
         type: string
       produces:
       - application/json
@@ -1103,6 +1560,10 @@ paths:
       - application/json
       description: Creates a time block for the authenticated user
       parameters:
+      - description: 8-100 characters; a replay returns the first block
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Task data
         in: body
         name: body
@@ -1323,6 +1784,28 @@ paths:
       summary: Move a block
       tags:
       - Tasks
+  /tasks/{id}/occurrence:
+    delete:
+      description: Deletes it unless it already happened (done/partial) and records
+        a cancelled exception; never marks it skipped.
+      parameters:
+      - description: Block ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel one occurrence of a recurring block
+      tags:
+      - Recurring
   /tasks/bulk:
     post:
       consumes:

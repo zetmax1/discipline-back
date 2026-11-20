@@ -13,7 +13,8 @@ import (
 
 // TaskService defines task business logic.
 type TaskService interface {
-	CreateTask(task *models.Task) error
+	// CreateTask with an idempotency key returns the first block on a replay and records no event.
+	CreateTask(task *models.Task, key string) error
 	BulkCreateTasks(tasks []*models.Task) error
 	GetTask(id, userID uint) (*models.Task, error)
 	GetTasks(userID uint, date string) ([]models.Task, error)
@@ -44,19 +45,25 @@ func NewTaskServiceWithEvents(taskRepo repositories.TaskRepository, rec events.R
 }
 
 func (s *taskService) blockCreated(t *models.Task) {
-	s.events.Record(t.UserID, events.BlockCreated, events.Props{"category": t.Category, "minutes": t.EndMin - t.StartMin,
-		"source": t.Source, "moved": t.MovedFromID != nil})
+	props := events.Props{"category": t.Category, "minutes": t.EndMin - t.StartMin, "source": t.Source, "moved": t.MovedFromID != nil}
+	if t.CategoryKind != nil {
+		props["category_kind"] = *t.CategoryKind
+	}
+	s.events.Record(t.UserID, events.BlockCreated, props)
 }
 
 // CreateTask validates the block and inserts it, rejecting overlaps (ErrTaskOverlap).
-func (s *taskService) CreateTask(task *models.Task) error {
+func (s *taskService) CreateTask(task *models.Task, key string) error {
 	if err := validateNewTask(task); err != nil {
 		return err
 	}
-	if err := s.taskRepo.CreateTasks(task.UserID, []*models.Task{task}); err != nil {
+	replayed, err := s.taskRepo.CreateTaskOnce(task, key)
+	if err != nil {
 		return err
 	}
-	s.blockCreated(task)
+	if !replayed {
+		s.blockCreated(task)
+	}
 	return nil
 }
 
@@ -197,14 +204,24 @@ func (s *taskService) MoveTask(id, userID uint, key string, date string, startMi
 	task, err := s.taskRepo.MoveTask(id, userID, key, func(current models.Task) (*models.Task, error) {
 		created = true
 		movedFrom := current.ID
-		return &models.Task{
-			UserID: userID, Name: current.Name, Category: current.Category, Energy: current.Energy,
-			StartTime: start, EndTime: end, Date: models.Date(date), Status: models.StatusPlanned,
-			Source: models.SourceManual, MovedFromID: &movedFrom,
-		}, nil
+		next := &models.Task{
+			UserID: userID, Name: current.Name, Category: current.Category, CategoryID: current.CategoryID,
+			Energy: current.Energy, StartTime: start, EndTime: end, Date: models.Date(date),
+			Status: models.StatusPlanned, Source: models.SourceManual, MovedFromID: &movedFrom,
+		}
+		if current.RecurringRuleID != nil { // an occurrence stays one, edited by hand (F13)
+			original := current.Date
+			if current.OriginalDate != nil {
+				original = *current.OriginalDate
+			}
+			next.Source, next.RecurringRuleID, next.RecurringEdited = models.SourceRecurring, current.RecurringRuleID, true
+			next.OriginalDate = &original
+		}
+		return next, nil
 	})
 	if err == nil && created { // a replay returns the first block without building a new one
-		s.events.Record(userID, events.BlockMoved, events.Props{"to_date": date})
+		s.events.Record(userID, events.BlockMoved, events.Props{"to_date": date,
+			"recurring": task.RecurringRuleID != nil, "same_day": task.OriginalDate != nil && string(*task.OriginalDate) == date})
 	}
 	return task, err
 }

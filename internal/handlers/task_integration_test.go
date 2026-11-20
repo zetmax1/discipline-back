@@ -42,6 +42,7 @@ type taskEnv struct {
 	rec *sqlRecorder
 	r   *gin.Engine
 	ids [2]uint
+	tz  string // the users' IANA zone (default: models.DefaultTimezone)
 }
 
 func newTaskEnv(t *testing.T) *taskEnv {
@@ -61,6 +62,9 @@ func newTaskEnv(t *testing.T) *taskEnv {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
+		if env.tz != "" {
+			c.Set("userTimezone", env.tz)
+		}
 		if c.GetHeader("X-Test-User") == "2" {
 			c.Set("userID", env.ids[1])
 		} else {
@@ -74,6 +78,12 @@ func newTaskEnv(t *testing.T) *taskEnv {
 	r.POST("/tasks/:id/move", h.MoveTask)
 	r.POST("/tasks/:id/distractions", h.AdjustDistractions)
 	r.PUT("/tasks/plan", h.SavePlan)
+	rh := NewRecurringHandler(services.NewRecurringService(repositories.NewRecurringRepository(gdb), events.NewRecorder(gdb)))
+	r.GET("/tasks", WithRange(rh.Range, rh.PlanDay(h.GetTasks)))
+	r.GET("/dashboard/today", rh.PlanToday(func(c *gin.Context) { c.Status(http.StatusNoContent) }))
+	RegisterRecurringRoutes(r, rh)
+	r.DELETE("/tasks/:id", h.DeleteTask)
+	RegisterCategoryRoutes(r, NewCategoryHandler(services.NewCategoryService(repositories.NewCategoryRepository(gdb))))
 	env.r = r
 	return env
 }
