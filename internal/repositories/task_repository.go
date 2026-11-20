@@ -172,6 +172,13 @@ func (r *taskRepository) CreateTaskOnce(task *models.Task, key string) (bool, er
 // string next to it. A block sent with only the legacy string is resolved by the trigger.
 func resolveCategory(tx *gorm.DB, userID uint, t *models.Task) error {
 	if t.CategoryID == nil {
+		// Only the legacy string: resolved here, not by the trigger (M3), so the answer and the
+		// block_created event carry the category (M8). The legacy string is kept as sent.
+		id, err := legacyCategoryID(tx, userID, t.Category)
+		if err != nil {
+			return err
+		}
+		t.CategoryID = &id
 		return nil
 	}
 	kind, err := categoryKind(tx, *t.CategoryID, userID)
@@ -285,7 +292,7 @@ func (r *taskRepository) UpdateTask(id, userID uint, merge TaskMerge) (*models.T
 }
 
 // categoryColumns completes an update's category columns: a categoryId must be the user's and
-// brings its legacy string; a legacy string alone clears category_id so the trigger resolves it;
+// brings its legacy string; a legacy string alone is resolved to its category (M3);
 // a block that still has no category (an empty legacy string) gets Personal now that it is touched.
 func categoryColumns(tx *gorm.DB, userID uint, current models.Task, cols map[string]any) error {
 	if id, ok := cols["category_id"].(uint); ok {
@@ -296,8 +303,12 @@ func categoryColumns(tx *gorm.DB, userID uint, current models.Task, cols map[str
 		cols["category"] = models.LegacyCategory(kind)
 		return nil
 	}
-	if _, ok := cols["category"]; ok {
-		cols["category_id"] = nil
+	if legacy, ok := cols["category"].(string); ok {
+		id, err := legacyCategoryID(tx, userID, legacy)
+		if err != nil {
+			return err
+		}
+		cols["category_id"] = id
 		return nil
 	}
 	if current.CategoryID == nil {

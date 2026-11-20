@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -76,6 +77,55 @@ func personalCategoryID(tx *gorm.DB, userID uint) (uint, error) {
 		Scan(&ids).Error
 	if err != nil || len(ids) == 0 {
 		return 0, err
+	}
+	return ids[0], nil
+}
+
+// legacyCategoryID finds (or creates) the user's category for a legacy tasks.category string,
+// in the trigger's order (migration 00014): 1. the mapped system key, 2. legacy_name, 3. the name,
+// case-insensitively, 4. a new category of the mapped kind (personal when unknown). An empty
+// string means Personal. The API resolves this itself so its writes do not depend on the trigger,
+// which migration 00015 drops (F13 review M3).
+func legacyCategoryID(tx *gorm.DB, userID uint, legacy string) (uint, error) {
+	if strings.TrimSpace(legacy) == "" {
+		return personalCategoryID(tx, userID)
+	}
+	if err := EnsureDefaultCategories(tx, userID); err != nil {
+		return 0, err
+	}
+	var ids []uint
+	// The trigger's lookup: want = the mapped name/kind, else the trimmed string and personal.
+	const want = `WITH k AS (SELECT left(lower(btrim(?::text)), 64) AS legacy, left(btrim(?::text), 64) AS raw),
+		w AS (SELECT k.legacy, coalesce(m.name, k.raw) AS name, coalesce(m.kind, 'personal') AS kind, m.system_key
+		        FROM k LEFT JOIN category_legacy_map m ON m.legacy = k.legacy)`
+	if err := tx.Raw(want+`
+		SELECT c.id FROM categories c, w
+		 WHERE c.user_id = ? AND (c.system_key = w.system_key OR c.legacy_name = w.legacy OR lower(c.name) = lower(w.name))
+		 ORDER BY (c.system_key IS DISTINCT FROM w.system_key), (c.legacy_name IS DISTINCT FROM w.legacy)
+		 LIMIT 1`, legacy, legacy, userID).Scan(&ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) > 0 {
+		return ids[0], nil
+	}
+	if err := tx.Raw(want+`
+		INSERT INTO categories (user_id, name, color, icon, kind, system_key, legacy_name, name_custom)
+		SELECT ?, w.name, d.color, d.icon, w.kind, w.system_key, w.legacy, false
+		  FROM w JOIN category_defaults d ON d.kind = w.kind
+		ON CONFLICT DO NOTHING RETURNING id`, legacy, legacy, userID).Scan(&ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) > 0 {
+		return ids[0], nil
+	}
+	// Lost a race (or the name exists under another kind): use the category with that name.
+	if err := tx.Raw(want+`
+		SELECT c.id FROM categories c, w WHERE c.user_id = ? AND lower(c.name) = lower(w.name)`,
+		legacy, legacy, userID).Scan(&ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, ErrCategoryInvalid
 	}
 	return ids[0], nil
 }
