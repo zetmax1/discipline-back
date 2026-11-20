@@ -383,15 +383,27 @@ func (r *taskRepository) CompletedSessionSpan(userID, blockID uint) (time.Time, 
 	return *row.First, *row.Last, true, nil
 }
 
+// Delete removes a block. An occurrence of a recurring rule also gets a cancelled exception for
+// its date, in the same transaction, so the next read does not create it again (F13 review M1).
 func (r *taskRepository) Delete(id, userID uint) error {
-	result := r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Task{})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var t models.Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", id, userID).
+			First(&t).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Task{}).Error; err != nil {
+			return err
+		}
+		if t.RecurringRuleID == nil {
+			return nil
+		}
+		day := t.Date
+		if t.OriginalDate != nil {
+			day = *t.OriginalDate
+		}
+		return addException(tx, userID, *t.RecurringRuleID, day, ExceptionCancelled)
+	})
 }
 
 // ErrTaskNotMovable is returned when moving a block that is already done, partial or moved.
