@@ -278,8 +278,10 @@ func (r *recurringRepository) DeleteRule(id, userID uint, fromDate *models.Date,
 			return tx.Where("id = ? AND user_id = ?", id, userID).Delete(&models.RecurringRule{}).Error
 		}
 		d := *fromDate
+		// least(): a fromDate after the rule's end never lengthens it, and a replay changes nothing (M5).
 		if err := tx.Model(&models.RecurringRule{}).Where("id = ? AND user_id = ?", id, userID).
-			Updates(map[string]any{"valid_to": addDays(d, -1), "updated_at": gorm.Expr("now()")}).Error; err != nil {
+			Updates(map[string]any{"valid_to": gorm.Expr("least(valid_to, ?::date)", addDays(d, -1)),
+				"updated_at": gorm.Expr("now()")}).Error; err != nil {
 			return err
 		}
 		if err := dropUntouched(tx, userID, id, maxDate(d, today)); err != nil {
