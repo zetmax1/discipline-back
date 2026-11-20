@@ -49,6 +49,8 @@ type RecurringService interface {
 	// Range materializes [max(start, today), min(end, today+56)] and returns start..end.
 	Range(userID uint, start, end, today string) (*RangeResult, error)
 	CancelOccurrence(taskID, userID uint) error
+	PlaceAnyway(ruleID, userID uint, date string) (*models.Task, error)
+	SkipConflict(ruleID, userID uint, date string) error
 }
 
 type recurringService struct {
@@ -245,4 +247,28 @@ func (s *recurringService) Range(userID uint, start, end, today string) (*RangeR
 
 func (s *recurringService) CancelOccurrence(taskID, userID uint) error {
 	return s.repo.CancelOccurrence(taskID, userID)
+}
+
+func (s *recurringService) PlaceAnyway(ruleID, userID uint, date string) (*models.Task, error) {
+	d, err := ruleDate(date)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.repo.PlaceAnyway(ruleID, userID, d)
+	if err == nil {
+		props := events.Props{"source": t.Source, "minutes": t.EndMin - t.StartMin, "moved": false}
+		if t.CategoryKind != nil {
+			props["category_kind"] = *t.CategoryKind
+		}
+		s.events.Record(userID, events.BlockCreated, props)
+	}
+	return t, err
+}
+
+func (s *recurringService) SkipConflict(ruleID, userID uint, date string) error {
+	d, err := ruleDate(date)
+	if err != nil {
+		return err
+	}
+	return s.repo.SkipConflict(ruleID, userID, d)
 }

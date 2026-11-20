@@ -16,7 +16,8 @@ import (
 func newTestRouter(enableDocs bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{}, handlers.NewFeatureHandler([]string{"F1"}), &handlers.DailyHandler{}, nil,
+	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{}, handlers.NewFeatureHandler([]string{"F1", "F13"}), &handlers.DailyHandler{},
+		&handlers.PlannerHandlers{Categories: &handlers.CategoryHandler{}, Recurring: &handlers.RecurringHandler{}},
 		"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 		"internal-secret-for-tests-0123456789", enableDocs,
 		func(uint) (*middleware.AuthUser, error) {
@@ -120,8 +121,8 @@ func TestFeaturesRoute_OnlyForSignedInUsers(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+userToken(t, 7))
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK || w.Body.String() != `{"features":["F1"]}` {
-		t.Fatalf("signed in: want 200 with [F1], got %d %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || w.Body.String() != `{"features":["F1","F13"]}` {
+		t.Fatalf("signed in: want 200 with [F1 F13], got %d %s", w.Code, w.Body.String())
 	}
 }
 

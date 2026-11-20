@@ -178,11 +178,13 @@ func (h *TaskHandler) BulkCreateTasks(c *gin.Context) {
 
 // GetTasks godoc
 // @Summary      List tasks
-// @Description  Returns tasks for the authenticated user, optionally filtered by date
+// @Description  Returns tasks for the authenticated user, optionally filtered by date. With FEATURE_F13, startDate and endDate (at most 42 days) read a range instead: missing recurring occurrences are created from today up to 8 weeks ahead, and the body is {tasks, exceptions, truncated}.
 // @Tags         Tasks
 // @Produce      json
 // @Security     BearerAuth
-// @Param        date  query  string  false  "Filter by date (YYYY-MM-DD)"  example(2026-03-02)
+// @Param        date       query  string  false  "Filter by date (YYYY-MM-DD)"  example(2026-03-02)
+// @Param        startDate  query  string  false  "F13: first date of a range (YYYY-MM-DD)"
+// @Param        endDate    query  string  false  "F13: last date of a range (YYYY-MM-DD)"
 // @Success      200   {object}  map[string]interface{}
 // @Failure      500   {object}  ErrorResponse
 // @Router       /tasks [get]

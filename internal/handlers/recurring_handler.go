@@ -248,17 +248,57 @@ func (h *RecurringHandler) CancelOccurrence(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// Range godoc
-// @Summary      Blocks of a date range (materializes recurring blocks)
-// @Description  With startDate and endDate (at most 42 days): creates the missing occurrences from today up to 8 weeks ahead, then returns the range. `truncated` when the range reaches past what is planned.
-// @Tags         Tasks
+// PlaceAnyway godoc
+// @Summary      Place a conflicting occurrence anyway
+// @Description  Creates the occurrence that a clash left out (a conflict exception), overlapping on purpose.
+// @Tags         Recurring
 // @Produce      json
 // @Security     BearerAuth
-// @Param        startDate  query     string  true  "YYYY-MM-DD"
-// @Param        endDate    query     string  true  "YYYY-MM-DD"
-// @Success      200        {object}  services.RangeResult
-// @Failure      400        {object}  ErrorResponse
-// @Router       /tasks/range [get]
+// @Param        id    path      int     true  "Rule ID"
+// @Param        date  path      string  true  "YYYY-MM-DD"
+// @Success      201   {object}  BlockResponse
+// @Failure      400   {object}  ErrorResponse
+// @Failure      404   {object}  ErrorResponse
+// @Router       /recurring-rules/{id}/occurrences/{date}/place-anyway [post]
+func (h *RecurringHandler) PlaceAnyway(c *gin.Context) {
+	id, ok := pathID(c, apierr.RecurringRuleNotFound)
+	if !ok {
+		return
+	}
+	t, err := h.svc.PlaceAnyway(id, c.MustGet("userID").(uint), c.Param("date"))
+	if err != nil {
+		respondRecurringError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, BlockResponse{Task: *t})
+}
+
+// SkipConflict godoc
+// @Summary      Skip a conflicting occurrence this week
+// @Description  Turns a conflict exception into a cancellation; nothing is counted as missed.
+// @Tags         Recurring
+// @Security     BearerAuth
+// @Param        id    path  int     true  "Rule ID"
+// @Param        date  path  string  true  "YYYY-MM-DD"
+// @Success      204
+// @Failure      400  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Router       /recurring-rules/{id}/occurrences/{date}/skip [post]
+func (h *RecurringHandler) SkipConflict(c *gin.Context) {
+	id, ok := pathID(c, apierr.RecurringRuleNotFound)
+	if !ok {
+		return
+	}
+	if err := h.svc.SkipConflict(id, c.MustGet("userID").(uint), c.Param("date")); err != nil {
+		respondRecurringError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// Range serves GET /tasks?startDate=&endDate= (documented on TaskHandler.GetTasks): with a range of
+// at most 42 days it creates the missing occurrences from today up to 8 weeks ahead, then returns
+// the range; `truncated` when the range reaches past what is planned.
 func (h *RecurringHandler) Range(c *gin.Context) {
 	res, err := h.svc.Range(c.MustGet("userID").(uint), c.Query("startDate"), c.Query("endDate"), userToday(c))
 	if err != nil {
@@ -291,4 +331,6 @@ func RegisterRecurringRoutes(r gin.IRoutes, h *RecurringHandler) {
 	r.PUT("/recurring-rules/:id", h.UpdateRule)
 	r.DELETE("/recurring-rules/:id", h.DeleteRule)
 	r.DELETE("/tasks/:id/occurrence", h.CancelOccurrence)
+	r.POST("/recurring-rules/:id/occurrences/:date/place-anyway", h.PlaceAnyway)
+	r.POST("/recurring-rules/:id/occurrences/:date/skip", h.SkipConflict)
 }

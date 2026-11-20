@@ -345,6 +345,193 @@
                 }
             }
         },
+        "/categories": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's categories; the six defaults are created the first time they are read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Categories"
+                ],
+                "summary": "List categories",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CategoryListResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Categories"
+                ],
+                "summary": "Create a category",
+                "parameters": [
+                    {
+                        "description": "name, color, icon, kind",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CategoryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CategoryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/categories/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Name, colour and icon; the kind never changes. A new name marks a default as renamed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Categories"
+                ],
+                "summary": "Update a category",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Category ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CategoryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CategoryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A category in use answers 409 unless reassignTo names another of the user's categories; blocks and rules then move there in one transaction. Defaults cannot be deleted.",
+                "tags": [
+                    "Categories"
+                ],
+                "summary": "Delete a category",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Category ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Category that takes over its blocks and rules",
+                        "name": "reassignTo",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/checkins/today": {
             "get": {
                 "security": [
@@ -654,6 +841,287 @@
                 }
             }
         },
+        "/recurring-rules": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Recurring"
+                ],
+                "summary": "List recurring rules",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RuleListResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Weekdays are ISO (Mon = 1 … Sun = 7), sorted and de-duplicated. Occurrences appear when a range is read.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Recurring"
+                ],
+                "summary": "Create a recurring rule",
+                "parameters": [
+                    {
+                        "description": "The rule",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RuleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RuleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/recurring-rules/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "scope=all changes the rule and its future untouched occurrences (the past is never rewritten); scope=following\u0026fromDate= splits it, keeping occurrences edited by hand.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Recurring"
+                ],
+                "summary": "Edit a recurring rule",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Rule ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "all (default) or following",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "YYYY-MM-DD, with scope=following",
+                        "name": "fromDate",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RuleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RuleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "scope=all removes the rule and its future untouched occurrences; scope=following\u0026fromDate= ends it the day before. Occurrences that happened stay as history.",
+                "tags": [
+                    "Recurring"
+                ],
+                "summary": "Delete a recurring rule",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Rule ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "all (default) or following",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "YYYY-MM-DD, with scope=following",
+                        "name": "fromDate",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/recurring-rules/{id}/occurrences/{date}/place-anyway": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates the occurrence that a clash left out (a conflict exception), overlapping on purpose.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Recurring"
+                ],
+                "summary": "Place a conflicting occurrence anyway",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Rule ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "YYYY-MM-DD",
+                        "name": "date",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BlockResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/recurring-rules/{id}/occurrences/{date}/skip": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Turns a conflict exception into a cancellation; nothing is counted as missed.",
+                "tags": [
+                    "Recurring"
+                ],
+                "summary": "Skip a conflicting occurrence this week",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Rule ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "YYYY-MM-DD",
+                        "name": "date",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sessions": {
             "get": {
                 "security": [
@@ -849,7 +1317,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns tasks for the authenticated user, optionally filtered by date",
+                "description": "Returns tasks for the authenticated user, optionally filtered by date. With FEATURE_F13, startDate and endDate (at most 42 days) read a range instead: missing recurring occurrences are created from today up to 8 weeks ahead, and the body is {tasks, exceptions, truncated}.",
                 "produces": [
                     "application/json"
                 ],
@@ -863,6 +1331,18 @@
                         "example": "2026-03-02",
                         "description": "Filter by date (YYYY-MM-DD)",
                         "name": "date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "F13: first date of a range (YYYY-MM-DD)",
+                        "name": "startDate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "F13: last date of a range (YYYY-MM-DD)",
+                        "name": "endDate",
                         "in": "query"
                     }
                 ],
@@ -1323,6 +1803,40 @@
                 }
             }
         },
+        "/tasks/{id}/occurrence": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes it unless it already happened (done/partial) and records a cancelled exception; never marks it skipped.",
+                "tags": [
+                    "Recurring"
+                ],
+                "summary": "Cancel one occurrence of a recurring block",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Block ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/vocabulary": {
             "get": {
                 "security": [
@@ -1565,6 +2079,48 @@
                 }
             }
         },
+        "handlers.CategoryListResponse": {
+            "type": "object",
+            "properties": {
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Category"
+                    }
+                }
+            }
+        },
+        "handlers.CategoryRequest": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "description": "#RRGGBB",
+                    "type": "string",
+                    "example": "#8B5CF6"
+                },
+                "icon": {
+                    "type": "string",
+                    "example": "book-open"
+                },
+                "kind": {
+                    "description": "focus|study|admin|exercise|rest|personal; create only",
+                    "type": "string",
+                    "example": "study"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Reading"
+                }
+            }
+        },
+        "handlers.CategoryResponse": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "$ref": "#/definitions/models.Category"
+                }
+            }
+        },
         "handlers.CheckInRequest": {
             "type": "object",
             "required": [
@@ -1605,7 +2161,7 @@
                     "example": 3
                 },
                 "madeAt": {
-                    "description": "the device clock when the user saved the check-in; a check-in queued offline counts for that local day when the clock is believable (at most 24 h old, at most a minute ahead), otherwise for today",
+                    "description": "MadeAt is the device clock when the user saved the check-in; an offline queue replays it\nlater. The check-in counts for that local day when the clock is believable (at most 24 h\nold, at most a minute ahead), otherwise for today.",
                     "type": "string",
                     "example": "2026-10-29T23:58:00Z"
                 },
@@ -1659,7 +2215,6 @@
         "handlers.CreateTaskRequest": {
             "type": "object",
             "required": [
-                "category",
                 "date",
                 "endTime",
                 "energy",
@@ -1668,9 +2223,14 @@
             ],
             "properties": {
                 "category": {
-                    "description": "deep-work|study|admin|gym|rest",
+                    "description": "legacy: deep-work|study|admin|gym|rest; needed without categoryId",
                     "type": "string",
                     "example": "deep-work"
+                },
+                "categoryId": {
+                    "description": "F13: one of the user's categories",
+                    "type": "integer",
+                    "example": 3
                 },
                 "date": {
                     "description": "YYYY-MM-DD",
@@ -1858,6 +2418,66 @@
                     "type": "string",
                     "maxLength": 2048,
                     "example": "0.turnstile-token"
+                }
+            }
+        },
+        "handlers.RuleListResponse": {
+            "type": "object",
+            "properties": {
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.RecurringRule"
+                    }
+                }
+            }
+        },
+        "handlers.RuleRequest": {
+            "type": "object",
+            "properties": {
+                "categoryId": {
+                    "type": "integer",
+                    "example": 4
+                },
+                "endMin": {
+                    "type": "integer",
+                    "example": 1170
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Gym"
+                },
+                "startMin": {
+                    "type": "integer",
+                    "example": 1080
+                },
+                "validFrom": {
+                    "type": "string",
+                    "example": "2026-11-02"
+                },
+                "validTo": {
+                    "type": "string",
+                    "example": "2026-12-31"
+                },
+                "weekdays": {
+                    "description": "ISO: Mon = 1 … Sun = 7",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "example": [
+                        1,
+                        3,
+                        5
+                    ]
+                }
+            }
+        },
+        "handlers.RuleResponse": {
+            "type": "object",
+            "properties": {
+                "rule": {
+                    "$ref": "#/definitions/models.RecurringRule"
                 }
             }
         },
@@ -2066,6 +2686,10 @@
                     "type": "string",
                     "example": "study"
                 },
+                "categoryId": {
+                    "type": "integer",
+                    "example": 3
+                },
                 "date": {
                     "type": "string",
                     "example": "2026-03-02"
@@ -2104,6 +2728,32 @@
                 }
             }
         },
+        "models.Category": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "nameCustom": {
+                    "type": "boolean"
+                },
+                "systemKey": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Checkin": {
             "type": "object",
             "properties": {
@@ -2135,6 +2785,41 @@
                 }
             }
         },
+        "models.RecurringRule": {
+            "type": "object",
+            "properties": {
+                "categoryId": {
+                    "type": "integer"
+                },
+                "endMin": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "splitFromRuleId": {
+                    "type": "integer"
+                },
+                "startMin": {
+                    "type": "integer"
+                },
+                "validFrom": {
+                    "type": "string"
+                },
+                "validTo": {
+                    "type": "string"
+                },
+                "weekdays": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "models.Task": {
             "type": "object",
             "properties": {
@@ -2146,6 +2831,13 @@
                     "type": "integer"
                 },
                 "category": {
+                    "type": "string"
+                },
+                "categoryId": {
+                    "description": "F13: the category (NULL only for legacy rows until migration 00015) and, for an occurrence\nof a recurring rule, the rule, the date it was planned for when it moved, and whether the\nuser edited it by hand. CategoryKind is read from the category, never stored here.",
+                    "type": "integer"
+                },
+                "categoryKind": {
                     "type": "string"
                 },
                 "created_at": {
@@ -2182,9 +2874,18 @@
                 "note": {
                     "type": "string"
                 },
+                "originalDate": {
+                    "type": "string"
+                },
                 "planId": {
                     "description": "set for smart-schedule blocks",
                     "type": "string"
+                },
+                "recurringEdited": {
+                    "type": "boolean"
+                },
+                "recurringRuleId": {
+                    "type": "integer"
                 },
                 "source": {
                     "description": "manual | smart-schedule",

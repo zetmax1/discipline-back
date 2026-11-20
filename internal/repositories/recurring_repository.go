@@ -53,6 +53,10 @@ type RecurringRepository interface {
 	// CancelOccurrence deletes an untouched occurrence (keeps a done/partial/in-progress one) and
 	// records a `cancelled` exception for the date it was planned on.
 	CancelOccurrence(taskID, userID uint) error
+	// PlaceAnyway creates the occurrence a conflict left out, overlapping on purpose.
+	PlaceAnyway(ruleID, userID uint, date models.Date) (*models.Task, error)
+	// SkipConflict turns a conflict into a cancellation ("skip this week").
+	SkipConflict(ruleID, userID uint, date models.Date) error
 }
 
 type recurringRepository struct{ db *gorm.DB }
@@ -309,12 +313,19 @@ func (r *recurringRepository) Materialize(userID uint, from, to models.Date) (Ma
 				if d < rule.ValidFrom || (rule.ValidTo != nil && d > *rule.ValidTo) || !rule.Weekdays.Has(iso) || taken[slot{rule.ID, d}] {
 					continue
 				}
-				ruleID, catID, kind := rule.ID, rule.CategoryID, rule.Kind
-				t := models.Task{
-					UserID: userID, Name: rule.Name, Category: models.LegacyCategory(kind), CategoryID: &catID,
-					StartTime: models.ClockFromMinutes(rule.StartMin), EndTime: models.ClockFromMinutes(rule.EndMin),
-					StartMin: rule.StartMin, EndMin: rule.EndMin, Status: models.StatusPlanned, Energy: 3, Date: d,
-					Source: models.SourceRecurring, RecurringRuleID: &ruleID,
+				t := occurrence(userID, &rule.RecurringRule, rule.Kind, d)
+				// Materialization never touches an existing block: a clash with an active one (F1's
+				// overlap rule, which ignores skipped and moved blocks) creates nothing and is
+				// recorded as a conflict the user can resolve.
+				switch err := checkOverlap(tx, userID, d, t.StartTime, t.EndTime, 0); {
+				case errors.Is(err, ErrTaskOverlap):
+					if err := addException(tx, userID, rule.ID, d, ExceptionConflict); err != nil {
+						return err
+					}
+					out.Conflicts++
+					continue
+				case err != nil:
+					return err
 				}
 				// Two devices racing: the slot index lets exactly one insert through.
 				res := tx.Clauses(clause.OnConflict{
@@ -326,7 +337,6 @@ func (r *recurringRepository) Materialize(userID uint, from, to models.Date) (Ma
 					return res.Error
 				}
 				if res.RowsAffected == 1 {
-					t.CategoryKind = &kind
 					out.Created = append(out.Created, t)
 				}
 			}
@@ -334,6 +344,73 @@ func (r *recurringRepository) Materialize(userID uint, from, to models.Date) (Ma
 		return nil
 	})
 	return out, err
+}
+
+// occurrence is the block a rule plans on date d.
+func occurrence(userID uint, rule *models.RecurringRule, kind string, d models.Date) models.Task {
+	ruleID, catID := rule.ID, rule.CategoryID
+	return models.Task{
+		UserID: userID, Name: rule.Name, Category: models.LegacyCategory(kind), CategoryID: &catID, CategoryKind: &kind,
+		StartTime: models.ClockFromMinutes(rule.StartMin), EndTime: models.ClockFromMinutes(rule.EndMin),
+		StartMin: rule.StartMin, EndMin: rule.EndMin, Status: models.StatusPlanned, Energy: 3, Date: d,
+		Source: models.SourceRecurring, RecurringRuleID: &ruleID,
+	}
+}
+
+// conflictRule locks the user's rule and checks it has a conflict exception on date.
+func conflictRule(tx *gorm.DB, ruleID, userID uint, date models.Date) (*models.RecurringRule, string, error) {
+	if err := lockUserTasks(tx, userID); err != nil {
+		return nil, "", err
+	}
+	var rows []struct {
+		models.RecurringRule
+		Kind string
+	}
+	if err := tx.Raw(`SELECT r.*, c.kind FROM recurring_rules r JOIN categories c ON c.id = r.category_id
+		WHERE r.id = ? AND r.user_id = ?`, ruleID, userID).Scan(&rows).Error; err != nil {
+		return nil, "", err
+	}
+	if len(rows) == 0 {
+		return nil, "", ErrRuleNotFound
+	}
+	var n int64
+	if err := tx.Raw(`SELECT count(*) FROM recurring_exceptions WHERE user_id = ? AND rule_id = ? AND date = ? AND reason = ?`,
+		userID, ruleID, date, ExceptionConflict).Scan(&n).Error; err != nil {
+		return nil, "", err
+	}
+	if n == 0 {
+		return nil, "", ErrOccurrenceNotFound
+	}
+	return &rows[0].RecurringRule, rows[0].Kind, nil
+}
+
+func (r *recurringRepository) PlaceAnyway(ruleID, userID uint, date models.Date) (*models.Task, error) {
+	var out models.Task
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		rule, kind, err := conflictRule(tx, ruleID, userID, date)
+		if err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM recurring_exceptions WHERE user_id = ? AND rule_id = ? AND date = ?`,
+			userID, ruleID, date).Error; err != nil {
+			return err
+		}
+		out = occurrence(userID, rule, kind, date) // overlapping on purpose: no overlap check
+		return tx.Create(&out).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (r *recurringRepository) SkipConflict(ruleID, userID uint, date models.Date) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if _, _, err := conflictRule(tx, ruleID, userID, date); err != nil {
+			return err
+		}
+		return addException(tx, userID, ruleID, date, ExceptionCancelled)
+	})
 }
 
 func (r *recurringRepository) Range(userID uint, start, end models.Date) ([]models.Task, []models.RecurringException, error) {
