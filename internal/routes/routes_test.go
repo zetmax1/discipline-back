@@ -16,7 +16,7 @@ import (
 func newTestRouter(enableDocs bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{}, handlers.NewFeatureHandler([]string{"F1"}), &handlers.DailyHandler{},
+	SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{}, handlers.NewFeatureHandler([]string{"F1"}), &handlers.DailyHandler{}, nil,
 		"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 		"internal-secret-for-tests-0123456789", enableDocs,
 		func(uint) (*middleware.AuthUser, error) {
@@ -140,7 +140,7 @@ func TestDailyLoopRoutesFollowFeatureF1(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	off := gin.New()
 	SetupRoutes(off, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
-		handlers.NewFeatureHandler(nil), &handlers.DailyHandler{}, "jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
+		handlers.NewFeatureHandler(nil), &handlers.DailyHandler{}, nil, "jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 		"internal-secret-for-tests-0123456789", false,
 		func(uint) (*middleware.AuthUser, error) {
 			return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil
@@ -148,5 +148,35 @@ func TestDailyLoopRoutesFollowFeatureF1(t *testing.T) {
 		ratelimit.NewMemoryStore())
 	if served(off) {
 		t.Fatal("with F1 off, the check-in route must not exist")
+	}
+}
+
+func TestPlannerRoutesOnlyWithF13(t *testing.T) {
+	served := func(r *gin.Engine) bool {
+		for _, rt := range r.Routes() {
+			if rt.Path == "/api/categories" {
+				return true
+			}
+		}
+		return false
+	}
+	build := func(flags []string) *gin.Engine {
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
+			handlers.NewFeatureHandler(flags), &handlers.DailyHandler{}, &handlers.PlannerHandlers{Categories: &handlers.CategoryHandler{}},
+			"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
+			"internal-secret-for-tests-0123456789", false,
+			func(uint) (*middleware.AuthUser, error) {
+				return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil
+			},
+			ratelimit.NewMemoryStore())
+		return r
+	}
+	if !served(build([]string{"F13"})) {
+		t.Fatal("with F13 on, the category routes must exist")
+	}
+	if served(build(nil)) {
+		t.Fatal("with F13 off, the category routes must not exist")
 	}
 }

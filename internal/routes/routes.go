@@ -33,6 +33,7 @@ func SetupRoutes(
 	vocabHandler *handlers.VocabHandler,
 	featureHandler *handlers.FeatureHandler,
 	dailyHandler *handlers.DailyHandler,
+	plannerHandler *handlers.PlannerHandlers,
 	jwtSecret string,
 	allowedOrigins string,
 	pythonServiceURL string,
@@ -100,6 +101,9 @@ func SetupRoutes(
 				protected.POST("/tasks/:id/check-in", taskHandler.CheckIn)
 				protected.POST("/tasks/:id/move", taskHandler.MoveTask)
 				handlers.RegisterDailyRoutes(protected, dailyHandler)
+			}
+			if featureHandler.Enabled("F13") && plannerHandler != nil { // categories and recurring blocks
+				handlers.RegisterCategoryRoutes(protected, plannerHandler.Categories)
 			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)

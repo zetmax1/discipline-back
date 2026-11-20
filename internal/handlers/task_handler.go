@@ -28,18 +28,20 @@ func NewTaskHandler(taskService services.TaskService) *TaskHandler {
 
 // CreateTaskRequest is the expected JSON body for creating a task.
 type CreateTaskRequest struct {
-	Name      string `json:"name" binding:"required" example:"Morning routine"` // 1-120 chars
-	Category  string `json:"category" binding:"required" example:"deep-work"`   // deep-work|study|admin|gym|rest
-	StartTime string `json:"startTime" binding:"required" example:"09:00"`      // HH:MM
-	EndTime   string `json:"endTime" binding:"required" example:"10:00"`        // HH:MM, after start, ≤ 24:00
-	Energy    int    `json:"energy" binding:"required" example:"4"`             // 1-5
-	Date      string `json:"date" binding:"required" example:"2026-03-02"`      // YYYY-MM-DD
+	Name       string `json:"name" binding:"required" example:"Morning routine"` // 1-120 chars
+	Category   string `json:"category" example:"deep-work"`                      // legacy: deep-work|study|admin|gym|rest; needed without categoryId
+	CategoryID *uint  `json:"categoryId,omitempty" example:"3"`                  // F13: one of the user's categories
+	StartTime  string `json:"startTime" binding:"required" example:"09:00"`      // HH:MM
+	EndTime    string `json:"endTime" binding:"required" example:"10:00"`        // HH:MM, after start, ≤ 24:00
+	Energy     int    `json:"energy" binding:"required" example:"4"`             // 1-5
+	Date       string `json:"date" binding:"required" example:"2026-03-02"`      // YYYY-MM-DD
 }
 
 // UpdateTaskRequest allows partial updates.
 type UpdateTaskRequest struct {
 	Name         *string `json:"name,omitempty" example:"Updated task name"`
 	Category     *string `json:"category,omitempty" example:"study"`
+	CategoryID   *uint   `json:"categoryId,omitempty" example:"3"`
 	StartTime    *string `json:"startTime,omitempty" example:"09:30"`
 	EndTime      *string `json:"endTime,omitempty" example:"11:00"`
 	Status       *string `json:"status,omitempty" example:"completed"`
@@ -73,6 +75,8 @@ func respondTaskError(c *gin.Context, err error) {
 		apierr.JSON(c, http.StatusConflict, apierr.TaskOverlap, err.Error())
 	case errors.Is(err, repositories.ErrTaskNotMovable):
 		apierr.JSON(c, http.StatusConflict, apierr.TaskNotMovable, err.Error())
+	case errors.Is(err, repositories.ErrCategoryInvalid):
+		apierr.JSON(c, http.StatusBadRequest, apierr.CategoryInvalid, "categoryId is not one of your categories")
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		apierr.JSON(c, http.StatusNotFound, apierr.TaskNotFound, "Task not found")
 	default:
@@ -104,14 +108,15 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	}
 
 	task := &models.Task{
-		UserID:    userID,
-		Name:      req.Name,
-		Category:  req.Category,
-		StartTime: models.ClockTime(req.StartTime),
-		EndTime:   models.ClockTime(req.EndTime),
-		Energy:    req.Energy,
-		Date:      models.Date(req.Date),
-		Status:    models.StatusPlanned,
+		UserID:     userID,
+		Name:       req.Name,
+		Category:   req.Category,
+		CategoryID: req.CategoryID,
+		StartTime:  models.ClockTime(req.StartTime),
+		EndTime:    models.ClockTime(req.EndTime),
+		Energy:     req.Energy,
+		Date:       models.Date(req.Date),
+		Status:     models.StatusPlanned,
 	}
 
 	if err := h.taskService.CreateTask(task); err != nil {
@@ -148,14 +153,15 @@ func (h *TaskHandler) BulkCreateTasks(c *gin.Context) {
 	var tasks []*models.Task
 	for _, tr := range req.Tasks {
 		tasks = append(tasks, &models.Task{
-			UserID:    userID,
-			Name:      tr.Name,
-			Category:  tr.Category,
-			StartTime: models.ClockTime(tr.StartTime),
-			EndTime:   models.ClockTime(tr.EndTime),
-			Energy:    tr.Energy,
-			Date:      models.Date(tr.Date),
-			Status:    models.StatusPlanned,
+			UserID:     userID,
+			Name:       tr.Name,
+			Category:   tr.Category,
+			CategoryID: tr.CategoryID,
+			StartTime:  models.ClockTime(tr.StartTime),
+			EndTime:    models.ClockTime(tr.EndTime),
+			Energy:     tr.Energy,
+			Date:       models.Date(tr.Date),
+			Status:     models.StatusPlanned,
 		})
 	}
 
@@ -231,6 +237,7 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	updates := services.TaskUpdate{
 		Name: req.Name, Category: req.Category, StartTime: req.StartTime, EndTime: req.EndTime,
 		Status: req.Status, Date: req.Date, Distractions: req.Distractions, Energy: req.Energy,
+		CategoryID: req.CategoryID,
 	}
 
 	task, err := h.taskService.UpdateTask(uint(taskID), userID, updates)
@@ -273,13 +280,14 @@ func (h *TaskHandler) SavePlan(c *gin.Context) {
 	tasks := make([]*models.Task, 0, len(req.Tasks))
 	for _, tr := range req.Tasks {
 		tasks = append(tasks, &models.Task{
-			Name:      tr.Name,
-			Category:  tr.Category,
-			StartTime: models.ClockTime(tr.StartTime),
-			EndTime:   models.ClockTime(tr.EndTime),
-			Energy:    tr.Energy,
-			Date:      models.Date(tr.Date),
-			Status:    models.StatusPlanned,
+			Name:       tr.Name,
+			Category:   tr.Category,
+			CategoryID: tr.CategoryID,
+			StartTime:  models.ClockTime(tr.StartTime),
+			EndTime:    models.ClockTime(tr.EndTime),
+			Energy:     tr.Energy,
+			Date:       models.Date(tr.Date),
+			Status:     models.StatusPlanned,
 		})
 	}
 	planID, replaced, err := h.taskService.SaveWeekPlan(userID, req.WeekStart, tasks)

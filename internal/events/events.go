@@ -25,12 +25,13 @@ const (
 	SessionAbandoned   Name = "session_abandoned"
 	DistractionLogged  Name = "distraction_logged"
 	ShutdownDone       Name = "shutdown_done"
+	WeekPlanned        Name = "week_planned" // F13: a range was materialized and created occurrences
 )
 
 // All lists every event the API writes.
 var All = []Name{
 	BlockCreated, BlockStatusChanged, BlockMoved, BlockCheckedIn, CheckinMorningDone,
-	SessionStarted, SessionCompleted, SessionAbandoned, DistractionLogged, ShutdownDone,
+	SessionStarted, SessionCompleted, SessionAbandoned, DistractionLogged, ShutdownDone, WeekPlanned,
 }
 
 // Props are facts about the action (counts, minutes, statuses).

@@ -86,8 +86,10 @@ func validateNewTask(t *models.Task) error {
 		return err
 	}
 	t.Name = name
-	if err := validateTaskCategory(t.Category); err != nil {
-		return err
+	if t.CategoryID == nil { // a categoryId is checked against the user's categories in the repository
+		if err := validateTaskCategory(t.Category); err != nil {
+			return err
+		}
 	}
 	if err := validateTaskDate(string(t.Date)); err != nil {
 		return err
@@ -102,6 +104,7 @@ func validateNewTask(t *models.Task) error {
 type TaskUpdate struct {
 	Name, Category, StartTime, EndTime, Status, Date *string
 	Distractions, Energy                             *int
+	CategoryID                                       *uint // F13; wins over Category
 }
 
 // mergeTaskUpdate validates the provided fields against the current row. It returns
@@ -118,7 +121,9 @@ func mergeTaskUpdate(current models.Task, u TaskUpdate) (map[string]any, models.
 		}
 		cols["name"], merged.Name = name, name
 	}
-	if u.Category != nil {
+	if u.CategoryID != nil {
+		cols["category_id"], merged.CategoryID = *u.CategoryID, u.CategoryID
+	} else if u.Category != nil {
 		if err := validateTaskCategory(*u.Category); err != nil {
 			return nil, current, false, err
 		}

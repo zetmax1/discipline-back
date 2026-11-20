@@ -74,6 +74,9 @@ func newTaskEnv(t *testing.T) *taskEnv {
 	r.POST("/tasks/:id/move", h.MoveTask)
 	r.POST("/tasks/:id/distractions", h.AdjustDistractions)
 	r.PUT("/tasks/plan", h.SavePlan)
+	r.GET("/tasks", h.GetTasks)
+	r.DELETE("/tasks/:id", h.DeleteTask)
+	RegisterCategoryRoutes(r, NewCategoryHandler(services.NewCategoryService(repositories.NewCategoryRepository(gdb))))
 	env.r = r
 	return env
 }
