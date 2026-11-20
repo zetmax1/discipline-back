@@ -93,13 +93,18 @@ func respondTaskError(c *gin.Context, err error) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        body  body  CreateTaskRequest  true  "Task data"
+// @Param        Idempotency-Key  header  string             false  "8-100 characters; a replay returns the first block"
+// @Param        body             body    CreateTaskRequest  true   "Task data"
 // @Success      201   {object}  map[string]interface{}
 // @Failure      400   {object}  ErrorResponse
 // @Failure      409   {object}  ErrorResponse
 // @Router       /tasks [post]
 func (h *TaskHandler) CreateTask(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
+	key, ok := optionalIdempotencyKey(c)
+	if !ok {
+		return
+	}
 
 	var req CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -119,7 +124,7 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 		Status:     models.StatusPlanned,
 	}
 
-	if err := h.taskService.CreateTask(task); err != nil {
+	if err := h.taskService.CreateTask(task, key); err != nil {
 		respondTaskError(c, err)
 		return
 	}

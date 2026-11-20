@@ -40,7 +40,9 @@ type Materialized struct {
 // Every method filters by userID; every multi-row write runs in one transaction.
 type RecurringRepository interface {
 	ListRules(userID uint) ([]models.RecurringRule, error)
-	CreateRule(rule *models.RecurringRule) error
+	// CreateRule inserts a rule. With an idempotency key, a replay fills rule with the rule the
+	// first call created.
+	CreateRule(rule *models.RecurringRule, key string) error
 	// UpdateRule edits the whole rule (fromDate nil) or splits it at fromDate ("this and following").
 	// Untouched planned occurrences from max(fromDate, today) are deleted so they are planned again.
 	UpdateRule(id, userID uint, edit RuleEdit, fromDate *models.Date, today models.Date) (*models.RecurringRule, error)
@@ -88,12 +90,36 @@ func (r *recurringRepository) ListRules(userID uint) ([]models.RecurringRule, er
 	return rules, err
 }
 
-func (r *recurringRepository) CreateRule(rule *models.RecurringRule) error {
+func (r *recurringRepository) CreateRule(rule *models.RecurringRule, key string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if _, err := categoryKind(tx, rule.CategoryID, rule.UserID); err != nil {
+		userID := rule.UserID
+		if key != "" {
+			if err := lockForKey(tx, userID); err != nil {
+				return err
+			}
+			earlier, found, err := earlierResource(tx, userID, key)
+			if err != nil {
+				return err
+			}
+			if found {
+				*rule = models.RecurringRule{}
+				err := tx.Where("id = ? AND user_id = ?", earlier, userID).First(rule).Error
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrRuleNotFound
+				}
+				return err
+			}
+		}
+		if _, err := categoryKind(tx, rule.CategoryID, userID); err != nil {
 			return err
 		}
-		return tx.Create(rule).Error
+		if err := tx.Create(rule).Error; err != nil {
+			return err
+		}
+		if key == "" {
+			return nil
+		}
+		return rememberKey(tx, userID, key, rule.ID)
 	})
 }
 

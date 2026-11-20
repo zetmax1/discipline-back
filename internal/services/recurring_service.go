@@ -42,7 +42,8 @@ type RangeResult struct {
 // RecurringService validates recurring rules and materializes their occurrences.
 type RecurringService interface {
 	ListRules(userID uint) ([]models.RecurringRule, error)
-	CreateRule(userID uint, in RuleInput) (*models.RecurringRule, error)
+	// CreateRule with an idempotency key returns the first result on a replay.
+	CreateRule(userID uint, in RuleInput, key string) (*models.RecurringRule, error)
 	// UpdateRule with fromDate == "" edits the whole rule; otherwise "this and following".
 	UpdateRule(id, userID uint, in RuleInput, fromDate string, today string) (*models.RecurringRule, error)
 	DeleteRule(id, userID uint, fromDate string, today string) error
@@ -146,7 +147,7 @@ func (s *recurringService) ListRules(userID uint) ([]models.RecurringRule, error
 	return s.repo.ListRules(userID)
 }
 
-func (s *recurringService) CreateRule(userID uint, in RuleInput) (*models.RecurringRule, error) {
+func (s *recurringService) CreateRule(userID uint, in RuleInput, key string) (*models.RecurringRule, error) {
 	if in.Name == nil {
 		empty := ""
 		in.Name = &empty
@@ -169,7 +170,7 @@ func (s *recurringService) CreateRule(userID uint, in RuleInput) (*models.Recurr
 	if rule.ValidTo != nil && *rule.ValidTo < rule.ValidFrom {
 		return nil, invalidRule(apierr.RecurringDatesInvalid, "validTo must not be before validFrom")
 	}
-	if err := s.repo.CreateRule(rule); err != nil {
+	if err := s.repo.CreateRule(rule, key); err != nil {
 		return nil, err
 	}
 	return rule, nil

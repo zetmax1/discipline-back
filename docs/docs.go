@@ -393,6 +393,12 @@ const docTemplate = `{
                 "summary": "Create a category",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "8-100 characters; a replay returns the first category",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "name, color, icon, kind",
                         "name": "body",
                         "in": "body",
@@ -888,6 +894,12 @@ const docTemplate = `{
                 ],
                 "summary": "Create a recurring rule",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "8-100 characters; a replay returns the first rule",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "description": "The rule",
                         "name": "body",
@@ -1386,6 +1398,12 @@ const docTemplate = `{
                 ],
                 "summary": "Create a new task",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "8-100 characters; a replay returns the first block",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "description": "Task data",
                         "name": "body",

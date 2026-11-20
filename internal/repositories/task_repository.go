@@ -22,6 +22,9 @@ type TaskMerge func(current models.Task) (cols map[string]any, merged models.Tas
 type TaskRepository interface {
 	// CreateTasks inserts one user's tasks atomically, rejecting overlaps.
 	CreateTasks(userID uint, tasks []*models.Task) error
+	// CreateTaskOnce inserts one block. With an idempotency key, a replay fills task with the
+	// block the first call created and reports replayed = true.
+	CreateTaskOnce(task *models.Task, key string) (replayed bool, err error)
 	FindByID(id, userID uint) (*models.Task, error)
 	FindByUser(userID uint) ([]models.Task, error)
 	FindByUserAndDate(userID uint, date string) ([]models.Task, error)
@@ -124,6 +127,45 @@ func (r *taskRepository) CreateTasks(userID uint, tasks []*models.Task) error {
 		}
 		return attachKinds(tx, tasks)
 	})
+}
+
+func (r *taskRepository) CreateTaskOnce(task *models.Task, key string) (bool, error) {
+	if key == "" {
+		return false, r.CreateTasks(task.UserID, []*models.Task{task})
+	}
+	replayed := false
+	userID := task.UserID
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockForKey(tx, userID); err != nil {
+			return err
+		}
+		earlier, found, err := earlierResource(tx, userID, key)
+		if err != nil {
+			return err
+		}
+		if found {
+			replayed = true
+			*task = models.Task{}
+			if err := tx.Where("id = ? AND user_id = ?", earlier, userID).First(task).Error; err != nil {
+				return err
+			}
+			return attachKinds(tx, []*models.Task{task})
+		}
+		if err := resolveCategory(tx, userID, task); err != nil {
+			return err
+		}
+		if err := checkOverlap(tx, userID, task.Date, task.StartTime, task.EndTime, 0); err != nil {
+			return err
+		}
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		if err := rememberKey(tx, userID, key, task.ID); err != nil {
+			return err
+		}
+		return attachKinds(tx, []*models.Task{task})
+	})
+	return replayed, err
 }
 
 // resolveCategory checks a block's categoryId belongs to the user and writes the matching legacy

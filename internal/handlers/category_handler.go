@@ -90,18 +90,23 @@ func (h *CategoryHandler) List(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        body  body      CategoryRequest  true  "name, color, icon, kind"
+// @Param        Idempotency-Key  header    string           false  "8-100 characters; a replay returns the first category"
+// @Param        body             body      CategoryRequest  true   "name, color, icon, kind"
 // @Success      201   {object}  CategoryResponse
 // @Failure      400   {object}  ErrorResponse
 // @Failure      409   {object}  ErrorResponse
 // @Router       /categories [post]
 func (h *CategoryHandler) Create(c *gin.Context) {
+	key, ok := optionalIdempotencyKey(c)
+	if !ok {
+		return
+	}
 	var req CategoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed")
 		return
 	}
-	cat, err := h.svc.Create(c.MustGet("userID").(uint), services.CategoryInput(req))
+	cat, err := h.svc.Create(c.MustGet("userID").(uint), services.CategoryInput(req), key)
 	if err != nil {
 		respondCategoryError(c, err)
 		return

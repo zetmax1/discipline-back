@@ -27,7 +27,8 @@ type CategoryInput struct {
 // CategoryService validates and stores a user's categories.
 type CategoryService interface {
 	List(userID uint) ([]models.Category, error)
-	Create(userID uint, in CategoryInput) (*models.Category, error)
+	// Create with an idempotency key returns the first result on a replay.
+	Create(userID uint, in CategoryInput, key string) (*models.Category, error)
 	Update(id, userID uint, in CategoryInput) (*models.Category, error)
 	Delete(id, userID uint, reassignTo *uint) error
 }
@@ -72,7 +73,7 @@ func categoryIcon(s *string) (string, error) {
 
 func (s *categoryService) List(userID uint) ([]models.Category, error) { return s.repo.List(userID) }
 
-func (s *categoryService) Create(userID uint, in CategoryInput) (*models.Category, error) {
+func (s *categoryService) Create(userID uint, in CategoryInput, key string) (*models.Category, error) {
 	name, err := categoryName(in.Name)
 	if err != nil {
 		return nil, err
@@ -89,7 +90,7 @@ func (s *categoryService) Create(userID uint, in CategoryInput) (*models.Categor
 		return nil, invalidCategory(apierr.CategoryKindInvalid, "kind must be one of focus, study, admin, exercise, rest, personal")
 	}
 	c := &models.Category{UserID: userID, Name: name, Color: color, Icon: icon, Kind: *in.Kind, NameCustom: true}
-	if err := s.repo.Create(c); err != nil {
+	if err := s.repo.Create(c, key); err != nil {
 		return nil, err
 	}
 	return c, nil

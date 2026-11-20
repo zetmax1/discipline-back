@@ -25,7 +25,9 @@ type CategoryRepository interface {
 	// their fixed order, then the user's own by name.
 	List(userID uint) ([]models.Category, error)
 	FindByID(id, userID uint) (*models.Category, error)
-	Create(c *models.Category) error
+	// Create inserts a category. With an idempotency key, a replay fills c with the category the
+	// first call created.
+	Create(c *models.Category, key string) error
 	// Update writes the given columns; nameCustom is set by the caller.
 	Update(id, userID uint, cols map[string]any) (*models.Category, error)
 	// Delete removes an unused category, or with reassignTo moves its blocks and rules there
@@ -167,13 +169,33 @@ func (r *categoryRepository) FindByID(id, userID uint) (*models.Category, error)
 	return &c, nil
 }
 
-func (r *categoryRepository) Create(c *models.Category) error {
+func (r *categoryRepository) Create(c *models.Category, key string) error {
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		userID := c.UserID
+		if key != "" {
+			if err := lockForKey(tx, userID); err != nil {
+				return err
+			}
+			earlier, found, err := earlierResource(tx, userID, key)
+			if err != nil {
+				return err
+			}
+			if found {
+				*c = models.Category{}
+				return tx.Where("id = ? AND user_id = ?", earlier, userID).First(c).Error
+			}
+		}
 		// The defaults first, so a user's own "Gym" cannot take a default's name before it exists.
-		if err := EnsureDefaultCategories(tx, c.UserID); err != nil {
+		if err := EnsureDefaultCategories(tx, userID); err != nil {
 			return err
 		}
-		return tx.Omit("SystemKey", "LegacyName").Create(c).Error
+		if err := tx.Omit("SystemKey", "LegacyName").Create(c).Error; err != nil {
+			return err
+		}
+		if key == "" {
+			return nil
+		}
+		return rememberKey(tx, userID, key, c.ID)
 	})
 	if isUniqueViolation(err, "uq_categories_user_name") {
 		return ErrCategoryNameTaken

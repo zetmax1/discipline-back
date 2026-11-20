@@ -905,6 +905,10 @@ paths:
       consumes:
       - application/json
       parameters:
+      - description: 8-100 characters; a replay returns the first category
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: name, color, icon, kind
         in: body
         name: body
@@ -1225,6 +1229,10 @@ paths:
       description: Weekdays are ISO (Mon = 1 … Sun = 7), sorted and de-duplicated.
         Occurrences appear when a range is read.
       parameters:
+      - description: 8-100 characters; a replay returns the first rule
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: The rule
         in: body
         name: body
@@ -1552,6 +1560,10 @@ paths:
       - application/json
       description: Creates a time block for the authenticated user
       parameters:
+      - description: 8-100 characters; a replay returns the first block
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Task data
         in: body
         name: body

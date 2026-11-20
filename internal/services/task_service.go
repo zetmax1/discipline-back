@@ -13,7 +13,8 @@ import (
 
 // TaskService defines task business logic.
 type TaskService interface {
-	CreateTask(task *models.Task) error
+	// CreateTask with an idempotency key returns the first block on a replay and records no event.
+	CreateTask(task *models.Task, key string) error
 	BulkCreateTasks(tasks []*models.Task) error
 	GetTask(id, userID uint) (*models.Task, error)
 	GetTasks(userID uint, date string) ([]models.Task, error)
@@ -52,14 +53,17 @@ func (s *taskService) blockCreated(t *models.Task) {
 }
 
 // CreateTask validates the block and inserts it, rejecting overlaps (ErrTaskOverlap).
-func (s *taskService) CreateTask(task *models.Task) error {
+func (s *taskService) CreateTask(task *models.Task, key string) error {
 	if err := validateNewTask(task); err != nil {
 		return err
 	}
-	if err := s.taskRepo.CreateTasks(task.UserID, []*models.Task{task}); err != nil {
+	replayed, err := s.taskRepo.CreateTaskOnce(task, key)
+	if err != nil {
 		return err
 	}
-	s.blockCreated(task)
+	if !replayed {
+		s.blockCreated(task)
+	}
 	return nil
 }
 

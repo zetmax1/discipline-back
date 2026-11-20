@@ -135,11 +135,16 @@ func (h *RecurringHandler) ListRules(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        body  body      RuleRequest  true  "The rule"
+// @Param        Idempotency-Key  header    string       false  "8-100 characters; a replay returns the first rule"
+// @Param        body             body      RuleRequest  true   "The rule"
 // @Success      201   {object}  RuleResponse
 // @Failure      400   {object}  ErrorResponse
 // @Router       /recurring-rules [post]
 func (h *RecurringHandler) CreateRule(c *gin.Context) {
+	key, ok := optionalIdempotencyKey(c)
+	if !ok {
+		return
+	}
 	var req RuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed")
@@ -150,7 +155,7 @@ func (h *RecurringHandler) CreateRule(c *gin.Context) {
 		apierr.JSON(c, http.StatusBadRequest, apierr.RecurringDatesInvalid, "validTo must be a date or null")
 		return
 	}
-	rule, err := h.svc.CreateRule(c.MustGet("userID").(uint), in)
+	rule, err := h.svc.CreateRule(c.MustGet("userID").(uint), in, key)
 	if err != nil {
 		respondRecurringError(c, err)
 		return
