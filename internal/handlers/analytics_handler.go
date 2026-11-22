@@ -18,6 +18,7 @@ import (
 
 	"discipline-backend/internal/apierr"
 	"discipline-backend/internal/logging"
+	"discipline-backend/internal/services"
 )
 
 // Internal token settings shared with the Python service.
@@ -37,6 +38,8 @@ var analyticsClient = &http.Client{Timeout: AnalyticsClientTimeout}
 
 // AnalyticsHandler proxies requests to the Python Analytics Microservice.
 type AnalyticsHandler struct {
+	// scheduleInputs is set with FEATURE_F9A: {weekStart} bodies are built from the server's data.
+	scheduleInputs   services.ScheduleInputs
 	pythonServiceURL string
 	internalSecret   []byte
 	client           *http.Client
@@ -291,7 +294,19 @@ func (h *AnalyticsHandler) GetFocusPatterns(c *gin.Context) {
 // @Failure      500   {object}  ErrorResponse
 // @Router       /analytics/smart-schedule [post]
 func (h *AnalyticsHandler) GenerateSmartSchedule(c *gin.Context) {
-	req, err := decodeSmartSchedule(c.Request.Body)
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed")
+		return
+	}
+	if h.scheduleInputs != nil {
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(raw, &probe) == nil && probe["weekStart"] != nil {
+			h.generateFromServer(c, raw)
+			return
+		}
+	}
+	req, err := decodeSmartSchedule(bytes.NewReader(raw))
 	if err != nil {
 		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed", gin.H{"details": err.Error()})
 		return
@@ -304,5 +319,40 @@ func (h *AnalyticsHandler) GenerateSmartSchedule(c *gin.Context) {
 		return
 	}
 
+	h.forward(c, http.MethodPost, h.upstreamURL("/analytics/smart-schedule", nil), body)
+}
+
+// WithScheduleInputs switches on F9a's server-side Smart Schedule input (FEATURE_F9A).
+func (h *AnalyticsHandler) WithScheduleInputs(src services.ScheduleInputs) *AnalyticsHandler {
+	h.scheduleInputs = src
+	return h
+}
+
+// generateFromServer serves the F9a body {weekStart}: commitments (expanded for that week, overnight
+// split at midnight, validity applied) and targets come from the database, never from the browser.
+func (h *AnalyticsHandler) generateFromServer(c *gin.Context, raw []byte) {
+	var req struct {
+		WeekStart string `json:"weekStart"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		apierr.JSON(c, http.StatusBadRequest, apierr.ValidationFailed, "Validation failed")
+		return
+	}
+	in, err := h.scheduleInputs.Build(c.MustGet("userID").(uint), req.WeekStart)
+	if errors.Is(err, services.ErrWeekStart) {
+		apierr.JSON(c, http.StatusBadRequest, apierr.WeekStartInvalid, err.Error())
+		return
+	}
+	if err != nil {
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to prepare the schedule")
+		return
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		apierr.JSON(c, http.StatusInternalServerError, apierr.InternalError, "Failed to create request")
+		return
+	}
 	h.forward(c, http.MethodPost, h.upstreamURL("/analytics/smart-schedule", nil), body)
 }

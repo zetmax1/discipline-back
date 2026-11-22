@@ -123,6 +123,9 @@ func SetupRoutes(
 			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
+			if featureHandler.Enabled("F9A") && plannerHandler != nil && plannerHandler.ScheduleInputs != nil {
+				analyticsHandler.WithScheduleInputs(plannerHandler.ScheduleInputs) // the legacy body still works
+			}
 
 			// Dashboard: today's metrics come from the analytics service's single metrics module
 			if planner { // today's recurring blocks exist before the metrics are read (M6)

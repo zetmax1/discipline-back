@@ -32,6 +32,8 @@ type TargetRepository interface {
 	SystemCategories(userID uint) (map[string]uint, error)
 	// ApplyIfNone saves t only when nothing is saved yet (local import); it reports whether it did.
 	ApplyIfNone(userID uint, t Targets) (bool, error)
+	// CategoryKinds maps the user's category ids to their kind.
+	CategoryKinds(userID uint) (map[uint]string, error)
 }
 
 type targetRepository struct{ db *gorm.DB }
@@ -137,4 +139,19 @@ func (r *targetRepository) SystemCategories(userID uint) (map[string]uint, error
 		return nil
 	})
 	return out, err
+}
+
+func (r *targetRepository) CategoryKinds(userID uint) (map[uint]string, error) {
+	var rows []struct {
+		ID   uint
+		Kind string
+	}
+	if err := r.db.Raw(`SELECT id, kind FROM categories WHERE user_id = ?`, userID).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[uint]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r.Kind
+	}
+	return out, nil
 }
