@@ -307,6 +307,14 @@ func (r *categoryRepository) Delete(id, userID uint, reassignTo *uint) error {
 				*reassignTo, userID, id).Error; err != nil {
 				return err
 			}
+			// F9a: the weekly target's minutes move too (capped at 80 h); the old row goes with the category.
+			if err := tx.Exec(`INSERT INTO category_targets (user_id, category_id, minutes_per_week)
+				SELECT user_id, ?, minutes_per_week FROM category_targets WHERE user_id = ? AND category_id = ?
+				ON CONFLICT (user_id, category_id) DO UPDATE
+				SET minutes_per_week = least(4800, category_targets.minutes_per_week + excluded.minutes_per_week)`,
+				*reassignTo, userID, id).Error; err != nil {
+				return err
+			}
 		} else {
 			var used int64
 			if err := tx.Raw(`SELECT (SELECT count(*) FROM tasks WHERE category_id = ?) + (SELECT count(*) FROM recurring_rules WHERE category_id = ?)`,

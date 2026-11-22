@@ -193,4 +193,6 @@ type PlannerHandlers struct {
 	Categories  *CategoryHandler
 	Recurring   *RecurringHandler
 	Commitments *CommitmentHandler // F9a
+	Targets     *TargetHandler
+	LocalImport *LocalImportHandler
 }

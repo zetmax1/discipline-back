@@ -93,6 +93,8 @@ func main() {
 			Categories:  handlers.NewCategoryHandler(services.NewCategoryService(repositories.NewCategoryRepository(db))),
 			Recurring:   handlers.NewRecurringHandler(services.NewRecurringService(repositories.NewRecurringRepository(db), events.NewRecorder(db))),
 			Commitments: handlers.NewCommitmentHandler(services.NewCommitmentService(repositories.NewCommitmentRepository(db), events.NewRecorder(db))),
+			Targets:     handlers.NewTargetHandler(services.NewTargetService(repositories.NewTargetRepository(db))),
+			LocalImport: handlers.NewLocalImportHandler(services.NewLocalImportService(repositories.NewCommitmentRepository(db), repositories.NewTargetRepository(db), events.NewRecorder(db))),
 		},
 		cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
 	routes.SetupIPDebug(r, cfg.EnableIPDebug)
