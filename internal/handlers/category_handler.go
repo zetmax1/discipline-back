@@ -188,8 +188,9 @@ func RegisterCategoryRoutes(r gin.IRoutes, h *CategoryHandler) {
 	r.DELETE("/categories/:id", h.Delete)
 }
 
-// PlannerHandlers groups the F13 handlers SetupRoutes registers when FEATURE_F13 is on.
+// PlannerHandlers groups the planner handlers: F13's (FEATURE_F13) and F9a's (FEATURE_F9A).
 type PlannerHandlers struct {
-	Categories *CategoryHandler
-	Recurring  *RecurringHandler
+	Categories  *CategoryHandler
+	Recurring   *RecurringHandler
+	Commitments *CommitmentHandler // F9a
 }

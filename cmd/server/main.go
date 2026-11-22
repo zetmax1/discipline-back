@@ -90,8 +90,9 @@ func main() {
 	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, handlers.NewFeatureHandler(cfg.Features),
 		handlers.NewDailyHandler(services.NewDailyService(repositories.NewDailyRepository(db), events.NewRecorder(db))),
 		&handlers.PlannerHandlers{
-			Categories: handlers.NewCategoryHandler(services.NewCategoryService(repositories.NewCategoryRepository(db))),
-			Recurring:  handlers.NewRecurringHandler(services.NewRecurringService(repositories.NewRecurringRepository(db), events.NewRecorder(db))),
+			Categories:  handlers.NewCategoryHandler(services.NewCategoryService(repositories.NewCategoryRepository(db))),
+			Recurring:   handlers.NewRecurringHandler(services.NewRecurringService(repositories.NewRecurringRepository(db), events.NewRecorder(db))),
+			Commitments: handlers.NewCommitmentHandler(services.NewCommitmentService(repositories.NewCommitmentRepository(db), events.NewRecorder(db))),
 		},
 		cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
 	routes.SetupIPDebug(r, cfg.EnableIPDebug)

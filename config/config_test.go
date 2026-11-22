@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/base64"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -322,4 +323,51 @@ func TestLoad_ReadsFeatureFlags(t *testing.T) {
 	if len(cfg.Features) != 1 || cfg.Features[0] != "F1" {
 		t.Fatalf("want [F1], got %v", cfg.Features)
 	}
+}
+
+func TestLoad_CalendarURLKey_RequiredOnlyWithF9A(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)) // 32 bytes, built here so no key-like literal is committed
+	t.Run("flag off: not needed", func(t *testing.T) {
+		setRequiredEnv(t)
+		t.Setenv("FEATURE_F9A", "")
+		t.Setenv("CALENDAR_URL_KEY", "")
+		if _, err := Load(); err != nil {
+			t.Fatalf("expected the config to load without the key, got %v", err)
+		}
+	})
+	t.Run("flag on, no key: refuses to start", func(t *testing.T) {
+		setRequiredEnv(t)
+		t.Setenv("FEATURE_F9A", "true")
+		t.Setenv("CALENDAR_URL_KEY", "")
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "CALENDAR_URL_KEY") {
+			t.Fatalf("expected an error naming CALENDAR_URL_KEY, got %v", err)
+		}
+	})
+	for name, bad := range map[string]string{"not base64": "%%%", "16 bytes": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 16))} {
+		t.Run("flag on, "+name+": refuses to start", func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("FEATURE_F9A", "true")
+			t.Setenv("CALENDAR_URL_KEY", bad)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "CALENDAR_URL_KEY") {
+				t.Fatalf("expected an error naming CALENDAR_URL_KEY, got %v", err)
+			}
+			if strings.Contains(err.Error(), bad) {
+				t.Fatalf("the error must not print the secret")
+			}
+		})
+	}
+	t.Run("flag on, valid key: loaded", func(t *testing.T) {
+		setRequiredEnv(t)
+		t.Setenv("FEATURE_F9A", "true")
+		t.Setenv("CALENDAR_URL_KEY", key)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.CalendarURLKey) != 32 {
+			t.Fatalf("expected the 32-byte key, got %d bytes", len(cfg.CalendarURLKey))
+		}
+	})
 }

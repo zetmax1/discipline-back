@@ -111,6 +111,10 @@ func SetupRoutes(
 				handlers.RegisterCategoryRoutes(protected, plannerHandler.Categories)
 				handlers.RegisterRecurringRoutes(protected, plannerHandler.Recurring)
 			}
+			// F9a: commitments, weekly targets, calendar import (builds on F13's categories).
+			if featureHandler.Enabled("F9A") && plannerHandler != nil && plannerHandler.Commitments != nil {
+				handlers.RegisterCommitmentRoutes(protected, plannerHandler.Commitments)
+			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
 

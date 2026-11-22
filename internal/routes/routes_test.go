@@ -181,3 +181,36 @@ func TestPlannerRoutesOnlyWithF13(t *testing.T) {
 		t.Fatal("with F13 off, the category routes must not exist")
 	}
 }
+
+func TestCommitmentRoutesOnlyWithF9A(t *testing.T) {
+	served := func(r *gin.Engine, path string) bool {
+		for _, rt := range r.Routes() {
+			if rt.Path == path {
+				return true
+			}
+		}
+		return false
+	}
+	build := func(flags []string) *gin.Engine {
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
+			handlers.NewFeatureHandler(flags), &handlers.DailyHandler{},
+			&handlers.PlannerHandlers{Categories: &handlers.CategoryHandler{}, Recurring: &handlers.RecurringHandler{}, Commitments: &handlers.CommitmentHandler{}},
+			"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
+			"internal-secret-for-tests-0123456789", false,
+			func(uint) (*middleware.AuthUser, error) {
+				return &middleware.AuthUser{Role: "user", Timezone: "UTC"}, nil
+			},
+			ratelimit.NewMemoryStore())
+		return r
+	}
+	for _, path := range []string{"/api/commitments", "/api/commitments/occurrences", "/api/commitments/:id"} {
+		if !served(build([]string{"F13", "F9A"}), path) {
+			t.Fatalf("with F9A on, %s must exist", path)
+		}
+		if served(build([]string{"F13"}), path) {
+			t.Fatalf("with F9A off, %s must not exist", path)
+		}
+	}
+}
