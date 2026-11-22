@@ -120,6 +120,9 @@ func SetupRoutes(
 				if plannerHandler.LocalImport != nil {
 					handlers.RegisterLocalImportRoute(protected, plannerHandler.LocalImport)
 				}
+				if plannerHandler.Calendar != nil {
+					handlers.RegisterCalendarRoutes(protected, plannerHandler.Calendar)
+				}
 			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)

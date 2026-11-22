@@ -197,4 +197,5 @@ type PlannerHandlers struct {
 	LocalImport *LocalImportHandler
 	// ScheduleInputs builds Smart Schedule's input from the server's data (F9a S5).
 	ScheduleInputs services.ScheduleInputs
+	Calendar       *CalendarHandler
 }

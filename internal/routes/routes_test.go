@@ -196,7 +196,7 @@ func TestCommitmentRoutesOnlyWithF9A(t *testing.T) {
 		r := gin.New()
 		SetupRoutes(r, &handlers.AuthHandler{}, &handlers.TaskHandler{}, &handlers.QuoteHandler{}, &handlers.VocabHandler{},
 			handlers.NewFeatureHandler(flags), &handlers.DailyHandler{},
-			&handlers.PlannerHandlers{Categories: &handlers.CategoryHandler{}, Recurring: &handlers.RecurringHandler{}, Commitments: &handlers.CommitmentHandler{}, Targets: &handlers.TargetHandler{}, LocalImport: &handlers.LocalImportHandler{}},
+			&handlers.PlannerHandlers{Categories: &handlers.CategoryHandler{}, Recurring: &handlers.RecurringHandler{}, Commitments: &handlers.CommitmentHandler{}, Targets: &handlers.TargetHandler{}, LocalImport: &handlers.LocalImportHandler{}, Calendar: &handlers.CalendarHandler{}},
 			"jwt-secret-for-tests-0123456789abcdef", "https://app.example.com", "http://py.invalid",
 			"internal-secret-for-tests-0123456789", false,
 			func(uint) (*middleware.AuthUser, error) {
@@ -205,7 +205,7 @@ func TestCommitmentRoutesOnlyWithF9A(t *testing.T) {
 			ratelimit.NewMemoryStore())
 		return r
 	}
-	for _, path := range []string{"/api/commitments", "/api/commitments/occurrences", "/api/commitments/:id", "/api/weekly-targets", "/api/commitments/local-import"} {
+	for _, path := range []string{"/api/commitments", "/api/commitments/occurrences", "/api/commitments/:id", "/api/weekly-targets", "/api/commitments/local-import", "/api/calendar-import/preview", "/api/calendar-import/commit", "/api/calendar-sources", "/api/calendar-sources/:id"} {
 		if !served(build([]string{"F13", "F9A"}), path) {
 			t.Fatalf("with F9A on, %s must exist", path)
 		}
