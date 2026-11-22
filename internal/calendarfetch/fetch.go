@@ -25,11 +25,11 @@ import (
 // Outcomes; each maps to one API error code and one calendar_sources.last_status.
 var (
 	ErrInvalid  = errors.New("calendar URL is not a secret https/webcal address") // ics_url_invalid / invalid
-	ErrBlocked  = errors.New("calendar URL points somewhere we never fetch")       // ics_url_blocked / blocked
-	ErrFailed   = errors.New("calendar could not be fetched")                      // ics_fetch_failed / failed
-	ErrTimeout  = errors.New("calendar fetch timed out")                           // ics_fetch_timeout / timeout
-	ErrTooLarge = errors.New("calendar is larger than 2 MiB")                      // ics_too_large / too_large
-	ErrBusy     = errors.New("too many calendar fetches at once")                  // ics_busy
+	ErrBlocked  = errors.New("calendar URL points somewhere we never fetch")      // ics_url_blocked / blocked
+	ErrFailed   = errors.New("calendar could not be fetched")                     // ics_fetch_failed / failed
+	ErrTimeout  = errors.New("calendar fetch timed out")                          // ics_fetch_timeout / timeout
+	ErrTooLarge = errors.New("calendar is larger than 2 MiB")                     // ics_too_large / too_large
+	ErrBusy     = errors.New("too many calendar fetches at once")                 // ics_busy
 )
 
 const (
