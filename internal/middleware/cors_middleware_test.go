@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -103,5 +104,21 @@ func TestCORS_NoOriginPassesThrough(t *testing.T) {
 	}
 	if w.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatal("no CORS headers without an Origin")
+	}
+}
+
+// Every header the web sends must pass the preflight: writes that are safe to replay carry an
+// Idempotency-Key (F1, F13, F9a). Without it the browser blocks the request and the web queues
+// it as if offline, so nothing ever syncs.
+func TestCORS_PreflightAllowsEveryHeaderTheWebSends(t *testing.T) {
+	w, _ := corsRequest(testOrigins, http.MethodOptions, "https://app.example.com")
+	allowed := map[string]bool{}
+	for _, h := range strings.Split(w.Header().Get("Access-Control-Allow-Headers"), ",") {
+		allowed[strings.ToLower(strings.TrimSpace(h))] = true
+	}
+	for _, h := range []string{"Content-Type", "Authorization", "Idempotency-Key"} {
+		if !allowed[strings.ToLower(h)] {
+			t.Errorf("Access-Control-Allow-Headers %q lacks %s", w.Header().Get("Access-Control-Allow-Headers"), h)
+		}
 	}
 }
