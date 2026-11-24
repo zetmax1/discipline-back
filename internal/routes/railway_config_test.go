@@ -64,8 +64,10 @@ func TestRailwayConfig_StartCommandRunsTheDockerfileBinary(t *testing.T) {
 
 // Railway runs the pre-deploy command in the new image, once, before the new version takes
 // traffic, so the schema is migrated by the same build that will serve it (the server refuses
-// to start on an old schema). Like the start command it runs without a shell, so it is the
-// absolute path of a binary the Dockerfile builds and keeps in the runtime stage.
+// to start on an old schema). It names the absolute path of a binary the Dockerfile builds and
+// keeps in the runtime stage. Railway's schema takes the command as one string, or an array of
+// at most ONE item (the whole command line): ["/app/migrate", "up"] fails to parse and the
+// deploy never starts.
 func TestRailwayConfig_PreDeployCommandMigratesWithTheDockerfileBinary(t *testing.T) {
 	cfg := readRailwayConfig(t)
 	dockerfile, err := os.ReadFile("../../Dockerfile")
@@ -77,10 +79,9 @@ func TestRailwayConfig_PreDeployCommandMigratesWithTheDockerfileBinary(t *testin
 		t.Fatal("Dockerfile: no `go build -o <binary> ./cmd/migrate` line")
 	}
 	binary := string(m[1])
-	want := []string{binary, "up"}
-	if len(cfg.Deploy.PreDeployCommand) != len(want) || cfg.Deploy.PreDeployCommand[0] != want[0] ||
-		cfg.Deploy.PreDeployCommand[1] != want[1] {
-		t.Fatalf("preDeployCommand %v; want %v", cfg.Deploy.PreDeployCommand, want)
+	want := binary + " up"
+	if len(cfg.Deploy.PreDeployCommand) != 1 || cfg.Deploy.PreDeployCommand[0] != want {
+		t.Fatalf("preDeployCommand %q; want one item, [%q]", cfg.Deploy.PreDeployCommand, want)
 	}
 	if !regexp.MustCompile(`COPY --from=builder ` + regexp.QuoteMeta(binary) + `\b`).Match(dockerfile) {
 		t.Fatalf("Dockerfile: the runtime stage does not copy %s from the builder", binary)
