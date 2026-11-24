@@ -25,13 +25,16 @@ const (
 	SessionAbandoned   Name = "session_abandoned"
 	DistractionLogged  Name = "distraction_logged"
 	ShutdownDone       Name = "shutdown_done"
-	WeekPlanned        Name = "week_planned" // F13: a range was materialized and created occurrences
+	WeekPlanned        Name = "week_planned"       // F13: a range was materialized and created occurrences
+	CommitmentCreated  Name = "commitment_created" // F9a: any source (manual, local import, calendar)
+	CalendarImported   Name = "calendar_imported"  // F9a: a calendar commit created or updated at least one
 )
 
 // All lists every event the API writes.
 var All = []Name{
 	BlockCreated, BlockStatusChanged, BlockMoved, BlockCheckedIn, CheckinMorningDone,
 	SessionStarted, SessionCompleted, SessionAbandoned, DistractionLogged, ShutdownDone, WeekPlanned,
+	CommitmentCreated, CalendarImported,
 }
 
 // Props are facts about the action (counts, minutes, statuses).

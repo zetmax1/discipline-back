@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -47,6 +48,9 @@ type Config struct {
 	RedisURL string
 	// Features are the ids switched on with FEATURE_<id>=true, e.g. FEATURE_F12A → "F12A".
 	Features []string
+	// CalendarURLKey (32 bytes, CALENDAR_URL_KEY in base64) encrypts secret calendar URLs (F9a).
+	// Required when FEATURE_F9A=true; no default.
+	CalendarURLKey []byte
 }
 
 // GinMode returns gin's debug mode only when APP_ENV=development.
@@ -105,6 +109,11 @@ func Load() (*Config, error) {
 			problems = append(problems, fmt.Sprintf("TRUSTED_PROXIES entry %q is not an IP or CIDR", p))
 		}
 	}
+	features := EnabledFeatures(os.Environ())
+	var calendarKey []byte
+	if slices.Contains(features, "F9A") {
+		calendarKey = calendarURLKey(requireEnv("CALENDAR_URL_KEY", &problems), &problems)
+	}
 	if len(problems) > 0 {
 		return nil, errors.New("invalid configuration: " + strings.Join(problems, "; "))
 	}
@@ -130,8 +139,22 @@ func Load() (*Config, error) {
 		TurnstileSecret:   turnstileSecret,
 		SentryDSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
 		SentryEnvironment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
-		Features:          EnabledFeatures(os.Environ()),
+		Features:          features,
+		CalendarURLKey:    calendarKey,
 	}, nil
+}
+
+// calendarURLKey decodes CALENDAR_URL_KEY (base64 of 32 random bytes). The value is never echoed.
+func calendarURLKey(raw string, problems *[]string) []byte {
+	if raw == "" {
+		return nil // requireEnv already recorded it
+	}
+	key, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(key) != 32 {
+		*problems = append(*problems, "CALENDAR_URL_KEY must be 32 random bytes in base64 (openssl rand -base64 32)")
+		return nil
+	}
+	return key
 }
 
 // requireEnv returns a required variable, recording a problem if it is unset or empty.

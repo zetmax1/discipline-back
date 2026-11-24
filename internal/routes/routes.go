@@ -111,8 +111,24 @@ func SetupRoutes(
 				handlers.RegisterCategoryRoutes(protected, plannerHandler.Categories)
 				handlers.RegisterRecurringRoutes(protected, plannerHandler.Recurring)
 			}
+			// F9a: commitments, weekly targets, calendar import (builds on F13's categories).
+			if featureHandler.Enabled("F9A") && plannerHandler != nil && plannerHandler.Commitments != nil {
+				handlers.RegisterCommitmentRoutes(protected, plannerHandler.Commitments)
+				if plannerHandler.Targets != nil {
+					handlers.RegisterTargetRoutes(protected, plannerHandler.Targets)
+				}
+				if plannerHandler.LocalImport != nil {
+					handlers.RegisterLocalImportRoute(protected, plannerHandler.LocalImport)
+				}
+				if plannerHandler.Calendar != nil {
+					handlers.RegisterCalendarRoutes(protected, plannerHandler.Calendar)
+				}
+			}
 
 			analyticsHandler := handlers.NewAnalyticsHandler(pythonServiceURL, internalJWTSecret)
+			if featureHandler.Enabled("F9A") && plannerHandler != nil && plannerHandler.ScheduleInputs != nil {
+				analyticsHandler.WithScheduleInputs(plannerHandler.ScheduleInputs) // the legacy body still works
+			}
 
 			// Dashboard: today's metrics come from the analytics service's single metrics module
 			if planner { // today's recurring blocks exist before the metrics are read (M6)

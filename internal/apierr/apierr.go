@@ -79,6 +79,28 @@ const (
 	RecurringWeekdaysInvalid Code = "recurring_weekdays_invalid"
 	RangeTooLong             Code = "range_too_long"
 	OccurrenceNotFound       Code = "occurrence_not_found"
+
+	// F9a: commitments, weekly targets, calendar import
+	CommitmentNotFound        Code = "commitment_not_found"
+	CommitmentWeekdaysInvalid Code = "commitment_weekdays_invalid"
+	CommitmentTimesInvalid    Code = "commitment_times_invalid"
+	CommitmentDatesInvalid    Code = "commitment_dates_invalid"
+	CommitmentKindInvalid     Code = "commitment_kind_invalid"
+	CommitmentLimitReached    Code = "commitment_limit_reached"
+	TargetsInvalid            Code = "targets_invalid"
+	TargetCategoryInvalid     Code = "target_category_invalid"
+	WeekStartInvalid          Code = "week_start_invalid"
+	ICSFileTooLarge           Code = "ics_file_too_large"
+	ICSInvalid                Code = "ics_invalid"
+	ICSTooManyEvents          Code = "ics_too_many_events"
+	ICSURLInvalid             Code = "ics_url_invalid"
+	ICSURLBlocked             Code = "ics_url_blocked"
+	ICSFetchFailed            Code = "ics_fetch_failed"
+	ICSFetchTimeout           Code = "ics_fetch_timeout"
+	ICSTooLarge               Code = "ics_too_large"
+	ICSBusy                   Code = "ics_busy"
+	CalendarSourceNotFound    Code = "calendar_source_not_found"
+	CalendarSourceLimit       Code = "calendar_source_limit"
 )
 
 // All lists every code the API can send.
@@ -94,6 +116,10 @@ var All = []Code{
 	CategoryNotFound, CategoryInUse, CategoryNameTaken, CategoryInvalid, CategoryKindInvalid, CategoryColorInvalid,
 	CategoryIconInvalid, RecurringRuleNotFound, RecurringDatesInvalid, RecurringWeekdaysInvalid, RangeTooLong,
 	OccurrenceNotFound,
+	CommitmentNotFound, CommitmentWeekdaysInvalid, CommitmentTimesInvalid, CommitmentDatesInvalid, CommitmentKindInvalid,
+	CommitmentLimitReached, TargetsInvalid, TargetCategoryInvalid, WeekStartInvalid, ICSFileTooLarge, ICSInvalid,
+	ICSTooManyEvents, ICSURLInvalid, ICSURLBlocked, ICSFetchFailed, ICSFetchTimeout, ICSTooLarge, ICSBusy,
+	CalendarSourceNotFound, CalendarSourceLimit,
 }
 
 func body(code Code, msg string, extra []gin.H) gin.H {

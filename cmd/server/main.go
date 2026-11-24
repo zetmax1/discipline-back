@@ -1,6 +1,10 @@
 package main
 
 import (
+	"slices"
+
+	"discipline-backend/internal/calendarcrypt"
+	"discipline-backend/internal/calendarfetch"
 	"log"
 	"net/http"
 	"os"
@@ -79,6 +83,17 @@ func main() {
 	vocabService := services.NewVocabService(vocabRepo)
 	vocabHandler := handlers.NewVocabHandler(vocabService)
 
+	// F9a: secret calendar URLs are encrypted with CALENDAR_URL_KEY (required with FEATURE_F9A, see config).
+	var calendarHandler *handlers.CalendarHandler
+	if slices.Contains(cfg.Features, "F9A") {
+		box, err := calendarcrypt.New(cfg.CalendarURLKey)
+		if err != nil {
+			log.Fatalf("Invalid CALENDAR_URL_KEY: %v", err)
+		}
+		calendarHandler = handlers.NewCalendarHandler(
+			services.NewCalendarService(repositories.NewCalendarRepository(db), calendarfetch.New(nil), box, events.NewRecorder(db)), limits)
+	}
+
 	// Setup Gin router (release mode unless APP_ENV=development)
 	gin.SetMode(cfg.GinMode())
 	r := gin.New() // RequestID, AccessLog and Recovery are added in SetupRoutes
@@ -90,8 +105,14 @@ func main() {
 	routes.SetupRoutes(r, authHandler, taskHandler, quoteHandler, vocabHandler, handlers.NewFeatureHandler(cfg.Features),
 		handlers.NewDailyHandler(services.NewDailyService(repositories.NewDailyRepository(db), events.NewRecorder(db))),
 		&handlers.PlannerHandlers{
-			Categories: handlers.NewCategoryHandler(services.NewCategoryService(repositories.NewCategoryRepository(db))),
-			Recurring:  handlers.NewRecurringHandler(services.NewRecurringService(repositories.NewRecurringRepository(db), events.NewRecorder(db))),
+			Categories:  handlers.NewCategoryHandler(services.NewCategoryService(repositories.NewCategoryRepository(db))),
+			Recurring:   handlers.NewRecurringHandler(services.NewRecurringService(repositories.NewRecurringRepository(db), events.NewRecorder(db))),
+			Commitments: handlers.NewCommitmentHandler(services.NewCommitmentService(repositories.NewCommitmentRepository(db), events.NewRecorder(db))),
+			Targets:     handlers.NewTargetHandler(services.NewTargetService(repositories.NewTargetRepository(db))),
+			ScheduleInputs: services.NewScheduleInputs(repositories.NewCommitmentRepository(db), repositories.NewTargetRepository(db),
+				services.NewTargetService(repositories.NewTargetRepository(db))),
+			Calendar:    calendarHandler,
+			LocalImport: handlers.NewLocalImportHandler(services.NewLocalImportService(repositories.NewCommitmentRepository(db), repositories.NewTargetRepository(db), events.NewRecorder(db))),
 		},
 		cfg.JWTSecret, cfg.AllowedOrigins, cfg.PythonServiceURL, cfg.InternalJWTSecret, cfg.EnableDocs, routes.UserLoader(userRepo), limits)
 	routes.SetupIPDebug(r, cfg.EnableIPDebug)
